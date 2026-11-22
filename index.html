@@ -61,7 +61,7 @@ h2{font-family:var(--display);font-weight:400;font-size:32px;line-height:1;margi
 .big{font-size:44px;font-weight:700;font-variant-numeric:tabular-nums;line-height:1}
 .ad{border:2px dashed var(--muted);border-radius:12px;padding-block:28px;padding-inline:16px;color:var(--muted)}
 #toast{position:absolute;left:50%;bottom:56px;transform:translateX(-50%);background:var(--chalk);color:var(--forest);font-weight:700;font-size:16px;padding:8px 14px;border-radius:10px;max-width:calc(100% - 32px);text-align:center;z-index:4;pointer-events:none;transition:opacity .3s}
-#recenter{justify-self:start;font:600 13px var(--ui);letter-spacing:.08em;text-transform:uppercase;background:transparent;color:var(--chalk);border:1px solid var(--line);border-radius:8px;padding:6px 10px;cursor:pointer}
+#recenter,#tiltBtn{justify-self:start;font:600 13px var(--ui);letter-spacing:.08em;text-transform:uppercase;background:transparent;color:var(--chalk);border:1px solid var(--line);border-radius:8px;padding:6px 10px;cursor:pointer}
 [hidden]{display:none!important}
 @media (prefers-reduced-motion: reduce){.gauge .pos,.gauge .neg{transition:none}}
 </style>
@@ -83,7 +83,7 @@ h2{font-family:var(--display);font-weight:400;font-size:32px;line-height:1;margi
     <div class="overlay" id="overlay"></div>
   </div>
   <div class="bar bottom">
-    <div class="stack"><span class="lbl" id="tiltStatus">Drag mode</span><button id="recenter" hidden>Recenter tilt</button></div>
+    <div class="stack"><span class="lbl" id="tiltStatus">Drag mode</span><button id="recenter" hidden>Recenter tilt</button><button id="tiltBtn">Enable tilt</button></div>
     <button id="loose" disabled aria-label="Loose arrow now"><span><b id="timeVal">10</b><small>Loose</small></span></button>
     <div class="stack right"><span class="lbl">Draw</span><div class="meter"><i id="powerBar"></i></div><span class="lbl" id="aimVal" style="color:var(--chalk)">Aim 0°</span></div>
   </div>
@@ -155,9 +155,10 @@ const sfx = {
 };
 
 /* ---------- Input: tilt + drag + keys ---------- */
-const input = { mode: 'touch', beta: 0, gamma: 0, b0: 0, g0: 0, got: false, deg: 0, power: .5 };
+const input = { ev: 0, nullEv: 0, err: '', perm: '', mode: 'touch', beta: 0, gamma: 0, b0: 0, g0: 0, got: false, deg: 0, power: .5 };
 function onOrientation(e) {
-  if (e.beta == null || e.gamma == null) return;
+  input.ev++;
+  if (e.beta == null || e.gamma == null) { input.nullEv++; return; }
   if (!input.got) { input.beta = e.beta; input.gamma = e.gamma; input.got = true; return; }
   input.beta += (e.beta - input.beta) * .3;     // light smoothing
   input.gamma += (e.gamma - input.gamma) * .3;
@@ -169,11 +170,11 @@ async function enableTilt() {
   if (!window.isSecureContext) return 'insecure';
   let permP = null;
   if (typeof DeviceOrientationEvent.requestPermission === 'function') {   // iOS 13+
-    try { permP = DeviceOrientationEvent.requestPermission(); } catch { return 'error'; }
+    try { permP = DeviceOrientationEvent.requestPermission(); } catch (e) { input.err = String(e && e.message || e); return 'error'; }
   }
-  window.addEventListener('deviceorientation', onOrientation);
+  if (!input.listening) { window.addEventListener('deviceorientation', onOrientation); input.listening = true; }
   if (permP) {
-    try { if (await permP !== 'granted') return 'denied'; } catch { return 'error'; }
+    try { input.perm = await permP; if (input.perm !== 'granted') return 'denied'; } catch (e) { input.err = String(e && e.message || e); return 'error'; }
   }
   const t0 = performance.now();
   while (!input.got && performance.now() - t0 < 2500) await new Promise(r => setTimeout(r, 100));
@@ -186,9 +187,25 @@ const TILT_MSG = {
   error: 'Motion access failed. Reload and tap Start again.',
   nodata: 'No motion data from this device. Drag to aim: sideways turns, pulling down draws harder.',
 };
+function tiltReport(res) {
+  const D = typeof DeviceOrientationEvent !== 'undefined';
+  const ios = (navigator.userAgent.match(/OS (\d+)_(\d+)/) || []).slice(1).join('.') || 'n/a';
+  return `result: ${res} | permission: ${input.perm || 'none'} | prompt API: ${D && typeof DeviceOrientationEvent.requestPermission === 'function' ? 'yes' : 'no'} | https: ${window.isSecureContext ? 'yes' : 'no'} | events: ${input.ev} (empty ${input.nullEv}) | iOS: ${ios}${input.err ? ' | error: ' + input.err : ''}`;
+}
+async function tryEnableTilt() {          // called straight from the "Enable tilt" tap
+  const p = enableTilt();
+  $('tiltBtn').disabled = true; $('tiltBtn').textContent = 'Checking…';
+  const res = await p;
+  $('tiltBtn').disabled = false; $('tiltBtn').textContent = 'Enable tilt';
+  if (res === 'ok') { setTiltMode(true); recenter(); toast('Tilt on. Hold the phone how you like and tap Recenter.'); }
+  else showOverlay(`<div class="card"><h2>Tilt is still off</h2><p>${TILT_MSG[res]}</p>
+    <p style="font-size:14px;color:var(--muted);user-select:text;-webkit-user-select:text">${tiltReport(res)}</p>
+    <p style="font-size:15px">Take a screenshot of this and send it to Claude.</p>
+    <button class="btn" id="diagClose">Back to the game</button></div>`), $('diagClose').onclick = hideOverlay;
+}
 function setTiltMode(on) {
   input.mode = on ? 'tilt' : 'touch';
-  $('recenter').hidden = !on;
+  $('recenter').hidden = !on; $('tiltBtn').hidden = on;
   $('tiltStatus').textContent = on ? 'Tilt on' : 'Drag mode';
 }
 function recenter() { input.b0 = input.beta; input.g0 = input.gamma; }
@@ -221,6 +238,7 @@ window.addEventListener('keydown', e => {
   e.preventDefault();
 });
 $('recenter').onclick = () => { recenter(); toast('Tilt recentered'); };
+$('tiltBtn').onclick = () => tryEnableTilt();
 $('loose').onclick = () => loose();
 
 /* ---------- Canvas & world ---------- */
