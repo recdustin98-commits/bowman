@@ -68,7 +68,7 @@ h2{font-family:var(--display);font-weight:400;font-size:32px;line-height:1;margi
 
 <div id="app">
   <div class="bar top">
-    <div class="stack"><span class="lbl">Round</span><span class="val" id="roundLbl">1</span></div>
+    <div class="stack"><span class="lbl" id="roundLbl">Round 1</span><span class="val" id="distVal">30 m</span></div>
     <div class="stack" style="align-items:center"><span class="lbl">Arrows</span><div id="quiver"></div></div>
     <div class="stack right"><span class="lbl">Cleared</span><span class="val" id="scoreVal">0</span></div>
   </div>
@@ -95,22 +95,19 @@ const CONFIG = {
   ARROWS_PER_ROUND: 3,
   INTERSTITIAL_EVERY: 3,    // show an ad break after every N cleared rounds
   REWARDED_EXTRA_ARROW: true,
-  METERS_PER_UNIT: 0.5,     // field is 100 units wide = 50 m
   // ---- Difficulty knobs (field units: the field is 100 wide) ----
-  TARGET_R_START: 6,        // target radius in round 1
-  TARGET_R_SHRINK: 0.4,     // radius lost per round
-  TARGET_R_MIN: 2.5,        // smallest the target gets
   WIND_EFFECT: 0.255,       // sideways push per wind mph per second in the air (was 0.085, tripled)
   REWARD_ARROWS: 3,         // arrows granted by watching a rewarded ad
-  TARGET_DISTANCE: 1.0,     // target sits at this share of the field's length (1.0 = far end), the same every round
-  MOVE_FROM_ROUND: 9999,    // moving target is OFF (set e.g. 3 to slide it from round 3)
-  MOVE_AMP_START: 6,        // how far it slides each way when it starts moving
-  MOVE_AMP_STEP: 2,         // extra slide per round after that
-  MOVE_AMP_MAX: 26,
-  MOVE_SPEED_START: 0.7,    // radians per second (0.7 = one full sweep about every 9 s)
-  MOVE_SPEED_STEP: 0.12,
-  MOVE_SPEED_MAX: 2.2,
-  WIND_BASE: 8, WIND_STEP: 12, WIND_MAX: 99,   // max wind = BASE + STEP * round
+  // ---- Difficulty tiers: each row lasts `rounds` rounds, the last row repeats forever ----
+  // dist = target distance (m), r = target radius (field is 100 units wide),
+  // spread = how far left/right of center the target's spot can be (units), wind = mph range.
+  TIERS: [
+    { rounds: 3, dist: 30, r: 6.0, spread: 6,  wind: [10, 25] },
+    { rounds: 3, dist: 40, r: 4.8, spread: 14, wind: [20, 40] },
+    { rounds: 3, dist: 50, r: 3.8, spread: 22, wind: [30, 60] },
+    { rounds: 3, dist: 60, r: 3.0, spread: 28, wind: [45, 80] },
+    { rounds: 1, dist: 70, r: 2.4, spread: 32, wind: [60, 99] },
+  ],
 };
 
 /* ---------- Monetization hooks (placeholders, no SDK yet) ----------
@@ -271,21 +268,26 @@ for (let i = 0; i < 60; i++) state.particles.push({ x: Math.random() * 100, y: M
 
 // Fixed draw: every arrow carries exactly to the target's line. Only direction (and wind) decide a hit.
 function rangeFor(rad) { const t = state.target; return t ? (world.ay - t.y) / Math.cos(rad) : 60; }
+function tierFor(round) {
+  let n = round;
+  for (let i = 0; i < CONFIG.TIERS.length; i++) {
+    const t = CONFIG.TIERS[i];
+    if (n <= t.rounds || i === CONFIG.TIERS.length - 1) return { ...t, index: i };
+    n -= t.rounds;
+  }
+}
+const maxTierDist = () => Math.max(...CONFIG.TIERS.map(t => t.dist));
+const unitsPerMeter = () => world.maxDist / maxTierDist();   // the farthest tier sits at the far end of the field
 function placeTarget(keep) {
   const t = state.target;
-  if (keep) { t.y = world.ay - t.frac * world.maxDist; return; }
-  const r = state.round;
-  const frac = CONFIG.TARGET_DISTANCE;
-  const radius = Math.max(CONFIG.TARGET_R_MIN, CONFIG.TARGET_R_START - (r - 1) * CONFIG.TARGET_R_SHRINK);
-  const moving = r >= CONFIG.MOVE_FROM_ROUND, k = r - CONFIG.MOVE_FROM_ROUND;
-  const amp = moving ? Math.min(CONFIG.MOVE_AMP_MAX, CONFIG.MOVE_AMP_START + k * CONFIG.MOVE_AMP_STEP) : 0;
-  const speed = moving ? Math.min(CONFIG.MOVE_SPEED_MAX, CONFIG.MOVE_SPEED_START + k * CONFIG.MOVE_SPEED_STEP) : 0;
-  const base = 50;                                  // always straight down the lane
-  state.target = { frac, base, x: base, y: world.ay - frac * world.maxDist, r: radius, amp, speed, phase: rand(0, 6.28) };
+  if (keep) { t.y = world.ay - t.dist * unitsPerMeter(); return; }
+  const tier = tierFor(state.round);
+  const x = clamp(50 + rand(-tier.spread, tier.spread), 8 + tier.r, 92 - tier.r);   // new spot each round, same distance
+  state.target = { dist: tier.dist, tier: tier.index, base: x, x, y: world.ay - tier.dist * unitsPerMeter(), r: tier.r, amp: 0 };
 }
 function newWind() {
-  const maxW = Math.min(CONFIG.WIND_BASE + state.round * CONFIG.WIND_STEP, CONFIG.WIND_MAX);
-  state.wind = Math.round(rand(.45, 1) * maxW) * (Math.random() < .5 ? -1 : 1);
+  const [lo, hi] = tierFor(state.round).wind;
+  state.wind = Math.round(rand(lo, hi)) * (Math.random() < .5 ? -1 : 1);
 }
 function startGame() {
   Object.assign(state, { round: 1, score: 0, rewardUsed: false, stuck: [] });   // score = rounds cleared
@@ -294,7 +296,8 @@ function startGame() {
 function startRound() {
   state.arrows = CONFIG.ARROWS_PER_ROUND; state.stuck = [];
   placeTarget(false); newWind();
-  banner(`Round ${state.round}`, state.round === 1 ? 'Hit the target' : state.round === CONFIG.MOVE_FROM_ROUND ? 'The target is moving now' : 'Wind is picking up');
+  const newTier = state.round > 1 && tierFor(state.round).index !== tierFor(state.round - 1).index;
+  banner(`Round ${state.round}`, state.round === 1 ? `${state.target.dist} m. Hit the target` : newTier ? `${state.target.dist} m now, with a smaller target` : 'New spot, new wind');
   startAim();
 }
 function startAim() {
@@ -379,7 +382,8 @@ function adPlaceholder(title, text, secs, skippable) {
 
 /* ---------- HUD ---------- */
 function hud() {
-  $('roundLbl').textContent = state.round;
+  $('roundLbl').textContent = `Round ${state.round}`;
+  $('distVal').textContent = state.target ? `${state.target.dist} m` : '';
   const t = state.target;
   $('scoreVal').textContent = state.score;
   $('bestVal').textContent = Math.max(state.best, state.score);
@@ -405,6 +409,12 @@ function drawField() {
   ctx.fillStyle = 'rgba(241,234,214,.18)'; ctx.fillRect(4, 0, .35, H); ctx.fillRect(95.65, 0, .35, H);
   // shooting line
   ctx.fillStyle = 'rgba(241,234,214,.75)'; ctx.fillRect(0, world.ay + 5, W, .6);
+  // distance marks every 10 m
+  ctx.font = '600 3px "Barlow Condensed", sans-serif'; ctx.fillStyle = 'rgba(241,234,214,.55)'; ctx.textAlign = 'left';
+  for (let m = 10; m <= maxTierDist(); m += 10) {
+    const y = world.ay - m * unitsPerMeter();
+    ctx.fillRect(4, y, 2.5, .3); ctx.fillText(m + ' m', 7, y + 1);
+  }
 }
 let clock = 0;
 function drawWind(dt) {
