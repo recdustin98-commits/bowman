@@ -1,0 +1,585 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="apple-mobile-web-app-capable" content="yes"></head><body>
+<title>Bowman</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bowlby+One+SC&family=Barlow+Condensed:wght@500;600;700&display=swap">
+<style>
+/* Layout: one-screen portrait game. Scoreboard bar on top, field canvas fills the middle, shooting bar (wind / timer / draw) at the bottom. Single deliberate look: dusk archery range. */
+:root{
+  --forest:#12211a; --forest-2:#1b3125; --line:#2c4a37;
+  --chalk:#f1ead6; --muted:#9db4a2;
+  --gold:#f4c331; --red:#e2483b; --blue:#3ea2df;
+  --display:"Bowlby One SC", "Arial Black", Impact, sans-serif;
+  --ui:"Barlow Condensed", "Arial Narrow", system-ui, sans-serif;
+  color-scheme:dark;
+}
+html,body{height:100%;margin:0;background:var(--forest);color:var(--chalk);overflow:hidden;overscroll-behavior:none}
+body{font-family:var(--ui);-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;touch-action:none;position:fixed;inset:0}
+#app{position:absolute;inset:env(safe-area-inset-top,0px) 0 env(safe-area-inset-bottom,0px) 0;display:flex;flex-direction:column}
+.bar{display:flex;align-items:center;justify-content:space-between;gap:12px;background:var(--forest);padding-block:8px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.top{border-bottom:1px solid var(--line)}
+.bottom{border-top:1px solid var(--line);display:grid;grid-template-columns:1fr auto 1fr;align-items:center;padding-block:10px}
+.lbl{font-size:12px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);font-weight:600}
+.val{font-size:24px;font-weight:700;font-variant-numeric:tabular-nums;line-height:1}
+.stack{display:flex;flex-direction:column;gap:3px;min-width:0}
+.right{align-items:flex-end;text-align:right}
+#quiver{display:flex;gap:6px}
+#quiver i{width:7px;height:26px;border-radius:2px;background:linear-gradient(var(--red) 0 30%, var(--chalk) 30% 100%);display:block}
+#quiver i.spent{background:var(--line)}
+#stage{position:relative;flex:1;min-height:0}
+canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
+#windArrow{display:inline-block;transition:transform .3s}
+#loose{width:74px;height:74px;border-radius:50%;border:0;padding:0;cursor:pointer;background:conic-gradient(var(--gold) calc(var(--t,1)*360deg), var(--line) 0);display:grid;place-items:center;font:inherit;color:var(--forest)}
+#loose span{width:62px;height:62px;border-radius:50%;background:var(--chalk);display:flex;flex-direction:column;align-items:center;justify-content:center;line-height:1}
+#loose b{font-size:28px;font-variant-numeric:tabular-nums}
+#loose small{font-size:10px;letter-spacing:.12em;font-weight:700;text-transform:uppercase}
+#loose:disabled{opacity:.45}
+#loose:focus-visible,button:focus-visible{outline:3px solid var(--blue);outline-offset:3px}
+.meter{width:100%;max-width:120px;height:10px;border-radius:5px;background:var(--line);overflow:hidden}
+.meter i{display:block;height:100%;width:50%;background:linear-gradient(90deg,var(--blue),var(--gold) 60%,var(--red))}
+.overlay{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding-inline:max(16px,env(safe-area-inset-left,0px));background:rgba(10,20,14,.72);-webkit-backdrop-filter:blur(3px);backdrop-filter:blur(3px);z-index:5}
+.card{width:100%;max-width:360px;display:flex;flex-direction:column;gap:14px;text-align:center}
+h1{font-family:var(--display);font-weight:400;font-size:56px;line-height:.9;margin:0;letter-spacing:.02em;color:var(--gold);text-wrap:balance}
+h2{font-family:var(--display);font-weight:400;font-size:32px;line-height:1;margin:0;text-wrap:balance}
+.card p{margin:0;font-size:18px;line-height:1.35;color:var(--chalk)}
+.how{display:grid;grid-template-columns:auto 1fr;gap:6px 12px;text-align:left;font-size:17px;line-height:1.3}
+.how b{color:var(--gold);font-weight:700;letter-spacing:.06em;text-transform:uppercase;font-size:14px;padding-top:2px}
+.btn{font:700 20px var(--ui);letter-spacing:.08em;text-transform:uppercase;border:0;border-radius:12px;padding:14px 18px;background:var(--gold);color:var(--forest);cursor:pointer}
+.btn.ghost{background:transparent;color:var(--chalk);border:2px solid var(--line)}
+.seg{display:flex;justify-content:center;gap:8px;align-items:center;font-size:16px}
+.seg button{font:600 16px var(--ui);border:2px solid var(--line);background:transparent;color:var(--chalk);border-radius:8px;padding:6px 12px;cursor:pointer}
+.seg button[aria-pressed="true"]{background:var(--chalk);color:var(--forest);border-color:var(--chalk)}
+.big{font-size:44px;font-weight:700;font-variant-numeric:tabular-nums;line-height:1}
+.ad{border:2px dashed var(--muted);border-radius:12px;padding-block:28px;padding-inline:16px;color:var(--muted)}
+#toast{position:absolute;left:50%;bottom:56px;transform:translateX(-50%);background:var(--chalk);color:var(--forest);font-weight:700;font-size:16px;padding:8px 14px;border-radius:10px;max-width:calc(100% - 32px);text-align:center;z-index:4;pointer-events:none;transition:opacity .3s}
+#recenter{position:absolute;right:max(10px,env(safe-area-inset-right,0px));bottom:10px;z-index:3;font:600 14px var(--ui);letter-spacing:.08em;text-transform:uppercase;background:rgba(18,33,26,.75);color:var(--chalk);border:1px solid var(--line);border-radius:8px;padding:6px 10px;cursor:pointer}
+[hidden]{display:none!important}
+@media (prefers-reduced-motion: reduce){#windArrow{transition:none}}
+</style>
+
+<div id="app">
+  <div class="bar top">
+    <div class="stack"><span class="lbl" id="roundLbl">Round 1</span><span class="val" id="distVal">— m</span></div>
+    <div class="stack" style="align-items:center"><span class="lbl">Arrows</span><div id="quiver"></div></div>
+    <div class="stack right"><span class="lbl">Score</span><span class="val" id="scoreVal">0</span></div>
+  </div>
+  <div id="stage">
+    <canvas id="cv"></canvas>
+    <div id="toast" hidden></div>
+    <button id="recenter" hidden>Recenter tilt</button>
+    <div class="overlay" id="overlay"></div>
+  </div>
+  <div class="bar bottom">
+    <div class="stack"><span class="lbl">Wind</span><span class="val"><span id="windArrow">➜</span> <span id="windVal">0</span></span></div>
+    <button id="loose" disabled aria-label="Loose arrow now"><span><b id="timeVal">10</b><small>Loose</small></span></button>
+    <div class="stack right"><span class="lbl">Draw</span><div class="meter"><i id="powerBar"></i></div><span class="lbl" id="aimVal" style="color:var(--chalk)">Aim 0°</span></div>
+  </div>
+</div>
+
+<script>
+/* ============================================================
+   BOWMAN prototype
+   Tilt left/right = aim direction. Tilt top toward you = draw harder.
+   Fallback: drag (left/right aims, pull down draws) or arrow keys + space.
+   ============================================================ */
+const CONFIG = {
+  AIM_SECONDS: 10,          // switchable to 5 on the title screen
+  ARROWS_PER_ROUND: 3,
+  INTERSTITIAL_EVERY: 3,    // show an ad break after every N cleared rounds
+  REWARDED_EXTRA_ARROW: true,
+  METERS_PER_UNIT: 0.5,     // field is 100 units wide = 50 m
+};
+
+/* ---------- Monetization hooks (placeholders, no SDK yet) ----------
+   Swap these bodies for a real ad SDK (e.g. AdMob via a native wrapper)
+   and in-app purchases when the game ships to the App Store. */
+const Monetize = {
+  adsRemoved: false,                      // set true after a "Remove ads" purchase
+  async interstitial() {
+    if (this.adsRemoved) return;
+    await adPlaceholder('Ad break', 'Interstitial ad plays here between rounds.', 3, true);
+  },
+  async rewarded() {                      // resolves true when the viewer earns the reward
+    return adPlaceholder('Rewarded ad', 'Watch to earn 1 extra arrow.', 5, false);
+  },
+  // Future shop: cosmetic items only change how things are drawn.
+  shop: [
+    { id: 'bow-yew',    kind: 'bow',   name: 'Yew Longbow',  price: 0.99, color: '#b07a3a' },
+    { id: 'arrow-fire', kind: 'arrow', name: 'Ember Fletch', price: 0.99, color: '#ff7a2f' },
+    { id: 'no-ads',     kind: 'perk',  name: 'Remove Ads',   price: 2.99 },
+  ],
+  equipped: { bow: '#7a4b22', fletch: '#e2483b' },
+  purchase(id) { /* TODO: StoreKit / IAP */ console.log('purchase', id); },
+};
+
+/* ---------- Helpers ---------- */
+const $ = id => document.getElementById(id);
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const rand = (a, b) => a + Math.random() * (b - a);
+const store = {
+  get(k, d) { try { const v = localStorage.getItem('bowman.' + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
+  set(k, v) { try { localStorage.setItem('bowman.' + k, JSON.stringify(v)); } catch {} },
+};
+CONFIG.AIM_SECONDS = store.get('aim', 10);
+
+/* ---------- Sound (WebAudio, starts on first tap) ---------- */
+let actx = null;
+function audioInit() { try { actx = actx || new (window.AudioContext || window.webkitAudioContext)(); actx.resume(); } catch {} }
+function tone(freq, dur, type = 'triangle', vol = .2, slide = 0) {
+  if (!actx) return;
+  const o = actx.createOscillator(), g = actx.createGain(), t = actx.currentTime;
+  o.type = type; o.frequency.setValueAtTime(freq, t);
+  if (slide) o.frequency.exponentialRampToValueAtTime(Math.max(30, freq + slide), t + dur);
+  g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(.001, t + dur);
+  o.connect(g).connect(actx.destination); o.start(t); o.stop(t + dur);
+}
+const sfx = {
+  twang() { tone(220, .25, 'triangle', .25, -120); tone(440, .12, 'sine', .08, -200); },
+  thunk() { tone(140, .14, 'square', .18, -80); },
+  miss()  { tone(90, .18, 'sine', .15, -40); },
+  tick()  { tone(1200, .04, 'sine', .05); },
+  win()   { [523, 659, 784].forEach((f, i) => setTimeout(() => tone(f, .18, 'triangle', .15), i * 90)); },
+};
+
+/* ---------- Input: tilt + drag + keys ---------- */
+const input = { mode: 'touch', beta: 0, gamma: 0, b0: 0, g0: 0, got: false, deg: 0, power: .5 };
+function onOrientation(e) {
+  if (e.beta == null || e.gamma == null) return;
+  if (!input.got) { input.beta = e.beta; input.gamma = e.gamma; input.got = true; return; }
+  input.beta += (e.beta - input.beta) * .3;     // light smoothing
+  input.gamma += (e.gamma - input.gamma) * .3;
+}
+async function enableTilt() {
+  try {
+    if (typeof DeviceOrientationEvent === 'undefined') return false;
+    if (typeof DeviceOrientationEvent.requestPermission === 'function') {   // iOS 13+
+      const r = await DeviceOrientationEvent.requestPermission();
+      if (r !== 'granted') return false;
+    }
+    window.addEventListener('deviceorientation', onOrientation);
+    const t0 = performance.now();
+    while (!input.got && performance.now() - t0 < 1200) await new Promise(r => setTimeout(r, 100));
+    return input.got;
+  } catch { return false; }
+}
+function recenter() { input.b0 = input.beta; input.g0 = input.gamma; }
+function readTilt() {
+  if (input.mode !== 'tilt') return;
+  input.deg = clamp((input.gamma - input.g0) * 1.1, -35, 35);
+  input.power = clamp(.5 + (input.beta - input.b0) / 45, 0, 1);
+}
+let drag = null;
+const stage = $('stage');
+stage.addEventListener('pointerdown', e => {
+  if (state.phase !== 'aim' || input.mode === 'tilt') return;
+  drag = { x: e.clientX, y: e.clientY, deg: input.deg, p: input.power };
+  stage.setPointerCapture?.(e.pointerId);
+});
+stage.addEventListener('pointermove', e => {
+  if (!drag || state.phase !== 'aim') return;
+  input.deg = clamp(drag.deg + (e.clientX - drag.x) * .22, -35, 35);
+  input.power = clamp(drag.p + (e.clientY - drag.y) / 320, 0, 1);
+});
+['pointerup', 'pointercancel'].forEach(t => stage.addEventListener(t, () => drag = null));
+window.addEventListener('keydown', e => {
+  if (state.phase !== 'aim') return;
+  if (e.key === 'ArrowLeft') input.deg = clamp(input.deg - 1, -35, 35);
+  else if (e.key === 'ArrowRight') input.deg = clamp(input.deg + 1, -35, 35);
+  else if (e.key === 'ArrowDown') input.power = clamp(input.power + .01, 0, 1);
+  else if (e.key === 'ArrowUp') input.power = clamp(input.power - .01, 0, 1);
+  else if (e.key === ' ' || e.key === 'Enter') { loose(); }
+  else return;
+  e.preventDefault();
+});
+$('recenter').onclick = () => { recenter(); toast('Tilt recentered'); };
+$('loose').onclick = () => loose();
+
+/* ---------- Canvas & world ---------- */
+const cv = $('cv'), ctx = cv.getContext('2d');
+const world = { w: 100, h: 160, scale: 4, ax: 50, ay: 146, maxDist: 120 };
+function resize() {
+  const r = stage.getBoundingClientRect(), dpr = Math.min(3, window.devicePixelRatio || 1);
+  cv.width = Math.round(r.width * dpr); cv.height = Math.round(r.height * dpr);
+  world.scale = r.width / 100; world.h = r.height / world.scale;
+  world.ay = world.h - 13; world.ax = 50;
+  world.maxDist = world.h - 13 - 20;
+  world.dpr = dpr;
+  if (state.target) placeTarget(true);
+}
+window.addEventListener('resize', resize);
+
+/* ---------- Game state ---------- */
+const state = {
+  phase: 'title', round: 1, score: 0, arrows: CONFIG.ARROWS_PER_ROUND, wind: 0,
+  target: null, stuck: [], flight: null, timeLeft: 0, rewardUsed: false, best: store.get('best', 0),
+  popups: [], lastTick: 0, particles: [],
+};
+for (let i = 0; i < 60; i++) state.particles.push({ x: Math.random() * 100, y: Math.random(), len: rand(.5, 1.2) });
+
+function rangeFor(p) { return 18 + p * (world.maxDist * 1.2 - 18); }
+function placeTarget(keep) {
+  const t = state.target;
+  if (keep) { t.y = world.ay - t.frac * world.maxDist; return; }
+  const r = state.round;
+  const frac = clamp(rand(.5, .68) + r * .04, .5, 1);
+  const spread = Math.min(4 + r * 3.5, 28);
+  state.target = { frac, x: 50 + rand(-spread, spread), y: world.ay - frac * world.maxDist, r: Math.max(5.5, 12.5 - r * .8) };
+}
+function newWind() {
+  const maxW = Math.min(8 + state.round * 12, 99);
+  state.wind = Math.round(rand(.45, 1) * maxW) * (Math.random() < .5 ? -1 : 1);
+}
+function startGame() {
+  Object.assign(state, { round: 1, score: 0, rewardUsed: false, stuck: [] });
+  startRound();
+}
+function startRound() {
+  state.arrows = CONFIG.ARROWS_PER_ROUND; state.stuck = [];
+  placeTarget(false); newWind();
+  banner(`Round ${state.round}`, state.round === 1 ? 'Hit the target' : 'Wind is picking up');
+  startAim();
+}
+function startAim() {
+  state.phase = 'aim'; state.timeLeft = CONFIG.AIM_SECONDS; state.lastTick = Math.ceil(state.timeLeft);
+  if (input.mode === 'touch') { input.deg = 0; input.power = .5; }
+  $('loose').disabled = false; hud();
+}
+function loose() {
+  if (state.phase !== 'aim') return;
+  state.phase = 'flight'; $('loose').disabled = true;
+  const deg = input.deg, p = input.power, range = rangeFor(p);
+  const T = .55 + range / 130;                         // seconds in the air
+  const drift = state.wind * .085 * T;                 // sideways push in field units
+  const rad = deg * Math.PI / 180;
+  state.flight = { t: 0, T, range, drift, sx: Math.sin(rad), cy: Math.cos(rad), x: world.ax, y: world.ay, h: 0, ang: rad };
+  state.arrows--; sfx.twang(); hud();
+}
+function land() {
+  const f = state.flight, t = state.target;
+  const lx = world.ax + f.sx * f.range + f.drift, ly = world.ay - f.cy * f.range;
+  const d = Math.hypot(lx - t.x, ly - t.y);
+  const hit = d <= t.r;
+  const ring = hit ? Math.max(1, 10 - Math.floor(d / t.r * 10)) : 0;
+  state.stuck.push({ x: lx, y: ly, hit, ang: f.ang + Math.atan2(f.drift, f.range) });
+  state.flight = null;
+  if (hit) {
+    const bonus = state.arrows * 5;                    // unused arrows are worth 5 each
+    const pts = ring + bonus;
+    state.score += pts; sfx.thunk(); setTimeout(sfx.win, 200);
+    popup(lx, ly, ring === 10 ? 'BULLSEYE!' : String(ring), true);
+    state.phase = 'result'; hud();
+    setTimeout(async () => {
+      banner(`+${pts}`, bonus ? `${ring} for the ring, ${bonus} for unused arrows` : `${ring} for the ring`);
+      await wait(1300);
+      const cleared = state.round;
+      state.round++;
+      if (cleared % CONFIG.INTERSTITIAL_EVERY === 0) await Monetize.interstitial();
+      startRound();
+    }, 700);
+  } else {
+    sfx.miss(); popup(lx, ly, 'Miss', false);
+    state.phase = 'result'; hud();
+    setTimeout(() => { state.arrows > 0 ? startAim() : gameOver(); }, 1100);
+  }
+}
+function gameOver() {
+  state.phase = 'over';
+  if (state.score > state.best) { state.best = state.score; store.set('best', state.best); }
+  const canReward = CONFIG.REWARDED_EXTRA_ARROW && !state.rewardUsed;
+  showOverlay(`
+    <div class="card">
+      <h2>Out of arrows</h2>
+      <div><div class="lbl">Score</div><div class="big">${state.score}</div></div>
+      <p>Reached round ${state.round} &middot; best ${state.best}</p>
+      ${canReward ? '<button class="btn" id="rewardBtn">Watch ad for 1 more arrow</button>' : ''}
+      <button class="btn ${canReward ? 'ghost' : ''}" id="againBtn">Play again</button>
+    </div>`);
+  $('againBtn').onclick = () => { hideOverlay(); startGame(); };
+  if (canReward) $('rewardBtn').onclick = async () => {
+    state.rewardUsed = true;
+    const ok = await Monetize.rewarded();
+    if (ok) { hideOverlay(); state.arrows = 1; startAim(); toast('One more arrow'); } else gameOver();
+  };
+}
+
+/* ---------- Overlays, toasts, banners ---------- */
+function showOverlay(html) { const o = $('overlay'); o.innerHTML = html; o.hidden = false; }
+function hideOverlay() { $('overlay').hidden = true; }
+const wait = ms => new Promise(r => setTimeout(r, ms));
+let toastT;
+function toast(msg, ms = 2200) { const t = $('toast'); t.textContent = msg; t.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => t.hidden = true, ms); }
+let bannerData = null;
+function banner(title, sub) { bannerData = { title, sub, t: 0 }; }
+function popup(x, y, text, good) { state.popups.push({ x, y, text, good, t: 0 }); }
+function adPlaceholder(title, text, secs, skippable) {
+  return new Promise(resolve => {
+    const prev = $('overlay').hidden ? null : $('overlay').innerHTML;
+    let left = secs;
+    showOverlay(`<div class="card"><div class="lbl">${title} (placeholder)</div><div class="ad"><p>${text}</p><div class="big" id="adCount">${left}</div></div>
+      <button class="btn ghost" id="adSkip" ${skippable ? '' : 'hidden'}>Skip</button></div>`);
+    const done = ok => { clearInterval(iv); prev == null ? hideOverlay() : showOverlay(prev); resolve(ok); };
+    const iv = setInterval(() => { left--; const c = $('adCount'); if (c) c.textContent = left; if (left <= 0) done(true); }, 1000);
+    $('adSkip').onclick = () => done(true);
+  });
+}
+
+/* ---------- HUD ---------- */
+function hud() {
+  $('roundLbl').textContent = `Round ${state.round}`;
+  const t = state.target;
+  $('distVal').textContent = t ? `${Math.round((world.ay - t.y) * CONFIG.METERS_PER_UNIT)} m` : '— m';
+  $('scoreVal').textContent = state.score;
+  $('windVal').textContent = (state.wind > 0 ? '+' : '') + state.wind;
+  $('windArrow').style.transform = `scaleX(${state.wind < 0 ? -1 : 1})`;
+  const q = $('quiver'); q.innerHTML = '';
+  for (let i = 0; i < Math.max(CONFIG.ARROWS_PER_ROUND, state.arrows); i++) {
+    const el = document.createElement('i'); if (i >= state.arrows) el.className = 'spent'; q.appendChild(el);
+  }
+}
+function hudLive() {
+  $('powerBar').style.width = Math.round(input.power * 100) + '%';
+  const r = Math.round(input.deg);
+  $('aimVal').textContent = `Aim ${r > 0 ? 'R ' : r < 0 ? 'L ' : ''}${Math.abs(r)}°`;
+  const secs = state.phase === 'aim' ? Math.ceil(state.timeLeft) : CONFIG.AIM_SECONDS;
+  $('timeVal').textContent = secs;
+  $('loose').style.setProperty('--t', state.phase === 'aim' ? (state.timeLeft / CONFIG.AIM_SECONDS).toFixed(3) : 1);
+}
+
+/* ---------- Drawing ---------- */
+function drawField() {
+  const W = 100, H = world.h;
+  for (let y = 0, i = 0; y < H; y += 9, i++) { ctx.fillStyle = i % 2 ? '#3f7a3c' : '#467f40'; ctx.fillRect(0, y, W, 9); }
+  // lane edges
+  ctx.fillStyle = 'rgba(241,234,214,.18)'; ctx.fillRect(4, 0, .35, H); ctx.fillRect(95.65, 0, .35, H);
+  // shooting line
+  ctx.fillStyle = 'rgba(241,234,214,.75)'; ctx.fillRect(0, world.ay + 5, W, .6);
+  // distance marks every 10 m
+  ctx.font = '600 3px "Barlow Condensed", sans-serif'; ctx.fillStyle = 'rgba(241,234,214,.55)'; ctx.textAlign = 'left';
+  for (let m = 10; m * 2 < world.ay; m += 10) {
+    const y = world.ay - m / CONFIG.METERS_PER_UNIT;
+    ctx.fillRect(4, y, 2.5, .3); ctx.fillText(m + ' m', 7, y + 1);
+  }
+}
+let clock = 0;
+function drawWind(dt) {
+  const w = state.wind, H = world.h, mag = Math.abs(w), dir = Math.sign(w || 1);
+  clock += dt;
+  // streaks: more visible, longer and faster as wind grows
+  ctx.strokeStyle = `rgba(241,234,214,${.18 + mag * .004})`; ctx.lineWidth = .35 + mag * .003; ctx.lineCap = 'round';
+  const count = Math.round(12 + mag * .35);
+  for (let i = 0; i < count && i < state.particles.length; i++) {
+    const p = state.particles[i];
+    p.x += w * .03 * dt * p.len * 6;
+    if (p.x > 104) p.x -= 108; if (p.x < -4) p.x += 108;
+    const len = (1.5 + mag * .1) * p.len, y = p.y * H + Math.sin(clock * 2 + i) * .4;
+    ctx.beginPath(); ctx.moveTo(p.x, y); ctx.lineTo(p.x - dir * len, y); ctx.stroke();
+  }
+}
+function drawFlag() {
+  const t = state.target; if (!t) return;
+  const w = state.wind, mag = Math.abs(w), dir = Math.sign(w || 1);
+  const px = t.x + dir * (t.r + 3), py = t.y - t.r * .2;      // pole beside the target, cloth streams downwind
+  const len = 4 + mag * .14, segs = 12;
+  const amp = .25 + (1 - Math.min(1, mag / 60)) * .5;           // light wind = floppy, strong = taut
+  // shadow
+  ctx.fillStyle = 'rgba(0,0,0,.22)'; ctx.beginPath(); ctx.arc(px + .6, py + .6, .7, 0, 7); ctx.fill();
+  // cloth (top-down: a fluttering ribbon streaming downwind)
+  ctx.fillStyle = '#e2483b';
+  ctx.beginPath();
+  for (let i = 0; i <= segs; i++) {
+    const f = i / segs, x = px + dir * len * f, y = py - 1.1 + Math.sin(clock * (4 + mag * .08) - f * 5) * amp * f * 1.6;
+    i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+  }
+  for (let i = segs; i >= 0; i--) {
+    const f = i / segs, wdt = 3 * (1 - f * .55), x = px + dir * len * f, y = py - 1.1 + wdt + Math.sin(clock * (4 + mag * .08) - f * 5) * amp * f * 1.6;
+    ctx.lineTo(x, y);
+  }
+  ctx.closePath(); ctx.fill();
+  ctx.fillStyle = 'rgba(241,234,214,.85)';
+  ctx.fillRect(px + dir * len * .45 - .25, py - 1.1, .5, 2.8);      // stripe
+  // pole cap
+  ctx.fillStyle = '#5b3a1f'; ctx.beginPath(); ctx.arc(px, py, .7, 0, 7); ctx.fill();
+}
+function drawWindGauge() {
+  const w = state.wind, mag = Math.abs(w), dir = Math.sign(w || 1);
+  const cx = 50, y = 7;
+  const len = 4 + mag * .32;                                      // arrow length grows with strength
+  const strong = mag >= 60, mid = mag >= 30;
+  const col = strong ? '#e2483b' : mid ? '#f4c331' : '#f1ead6';
+  ctx.fillStyle = 'rgba(18,33,26,.7)';
+  const bw = Math.max(len + 10, 26);
+  ctx.beginPath(); ctx.roundRect ? ctx.roundRect(cx - bw / 2, y - 5, bw, 10.5, 5) : ctx.rect(cx - bw / 2, y - 5, bw, 10.5); ctx.fill();
+  // arrow centred, pointing where the wind blows
+  const x0 = cx - dir * len / 2, x1 = cx + dir * len / 2, ay = y + 2.4;
+  ctx.strokeStyle = col; ctx.fillStyle = col; ctx.lineWidth = .9; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(x0, ay); ctx.lineTo(x1 - dir * 1.4, ay); ctx.stroke();
+  ctx.beginPath(); ctx.moveTo(x1, ay); ctx.lineTo(x1 - dir * 2, ay - 1.4); ctx.lineTo(x1 - dir * 2, ay + 1.4); ctx.closePath(); ctx.fill();
+  ctx.textAlign = 'center'; ctx.font = '700 3.6px "Barlow Condensed", sans-serif';
+  ctx.fillText(`WIND ${w > 0 ? '+' : ''}${w}`, cx, y - .6);
+}
+function drawTarget() {
+  const t = state.target; if (!t) return;
+  // stand shadow + legs
+  ctx.fillStyle = 'rgba(0,0,0,.25)'; ctx.beginPath(); ctx.ellipse(t.x + 1.5, t.y + 2, t.r * 1.05, t.r * 1.05, 0, 0, 7); ctx.fill();
+  ctx.fillStyle = '#c9b78a'; ctx.beginPath(); ctx.arc(t.x, t.y, t.r * 1.08, 0, 7); ctx.fill();    // straw boss
+  const rings = ['#f6f1e4', '#f6f1e4', '#1d1d1d', '#1d1d1d', '#3ea2df', '#3ea2df', '#e2483b', '#e2483b', '#f4c331', '#f4c331'];
+  for (let i = 0; i < 10; i++) {
+    const rr = t.r * (10 - i) / 10;
+    ctx.fillStyle = rings[i]; ctx.beginPath(); ctx.arc(t.x, t.y, rr, 0, 7); ctx.fill();
+    ctx.strokeStyle = i === 3 ? 'rgba(255,255,255,.5)' : 'rgba(0,0,0,.25)'; ctx.lineWidth = .12; ctx.stroke();
+  }
+  ctx.fillStyle = '#1d1d1d'; ctx.fillRect(t.x - .25, t.y - .25, .5, .5);
+}
+function drawArrow(x, y, ang, scale, fletch) {
+  ctx.save(); ctx.translate(x, y); ctx.rotate(ang); ctx.scale(scale, scale);
+  ctx.strokeStyle = '#e9dcc0'; ctx.lineWidth = .45; ctx.beginPath(); ctx.moveTo(0, -3); ctx.lineTo(0, 5.5); ctx.stroke();
+  ctx.fillStyle = '#b8bcc2'; ctx.beginPath(); ctx.moveTo(0, -4.2); ctx.lineTo(-.6, -2.8); ctx.lineTo(.6, -2.8); ctx.fill();
+  ctx.fillStyle = fletch; ctx.beginPath(); ctx.moveTo(0, 3.6); ctx.lineTo(-1.1, 5.8); ctx.lineTo(0, 5.2); ctx.lineTo(1.1, 5.8); ctx.fill();
+  ctx.restore();
+}
+function drawStuck() {
+  for (const s of state.stuck) {
+    if (s.hit) {
+      ctx.fillStyle = 'rgba(0,0,0,.35)'; ctx.beginPath(); ctx.arc(s.x + .5, s.y + .5, .7, 0, 7); ctx.fill();
+      ctx.fillStyle = Monetize.equipped.fletch; ctx.beginPath(); ctx.arc(s.x, s.y, .9, 0, 7); ctx.fill();
+      ctx.fillStyle = '#e9dcc0'; ctx.beginPath(); ctx.arc(s.x, s.y, .35, 0, 7); ctx.fill();
+    } else {
+      ctx.globalAlpha = .85; drawArrow(s.x, s.y + 2, s.ang, .8, Monetize.equipped.fletch); ctx.globalAlpha = 1;
+    }
+  }
+}
+function drawPreview() {
+  if (state.phase !== 'aim') return;
+  const range = rangeFor(input.power), rad = input.deg * Math.PI / 180;
+  const sx = Math.sin(rad), cy = Math.cos(rad);
+  const n = 22;
+  for (let i = 1; i <= n; i++) {
+    const f = i / n, h = 4 * f * (1 - f);
+    const x = world.ax + sx * range * f, y = world.ay - cy * range * f;
+    ctx.fillStyle = `rgba(241,234,214,${.9 - f * .35})`;
+    ctx.beginPath(); ctx.arc(x, y, .35 + h * .5, 0, 7); ctx.fill();
+  }
+  // landing marker
+  const lx = world.ax + sx * range, ly = world.ay - cy * range;
+  ctx.strokeStyle = 'rgba(241,234,214,.85)'; ctx.lineWidth = .3;
+  ctx.beginPath(); ctx.moveTo(lx - 1.4, ly - 1.4); ctx.lineTo(lx + 1.4, ly + 1.4); ctx.moveTo(lx + 1.4, ly - 1.4); ctx.lineTo(lx - 1.4, ly + 1.4); ctx.stroke();
+}
+function drawArcher() {
+  const x = world.ax, y = world.ay;
+  const aim = (state.phase === 'aim' ? input.deg : (state.flight ? state.flight.ang * 180 / Math.PI : input.deg)) * Math.PI / 180;
+  const draw = state.phase === 'aim' ? input.power : 0;
+  ctx.fillStyle = 'rgba(0,0,0,.28)'; ctx.beginPath(); ctx.ellipse(x + 1.2, y + 1.4, 5.2, 3, 0, 0, 7); ctx.fill();
+  ctx.save(); ctx.translate(x, y); ctx.rotate(aim);
+  // shoulders + cloak
+  ctx.fillStyle = '#2f5a3b'; ctx.beginPath(); ctx.ellipse(0, 1.2, 4.6, 2.4, 0, 0, 7); ctx.fill();
+  // bow arm forward
+  ctx.strokeStyle = '#d8b48a'; ctx.lineWidth = 1; ctx.lineCap = 'round';
+  ctx.beginPath(); ctx.moveTo(-1, .4); ctx.lineTo(0, -5.6); ctx.stroke();
+  // bow (seen from above: a thin arc)
+  ctx.strokeStyle = Monetize.equipped.bow; ctx.lineWidth = .8;
+  ctx.beginPath(); ctx.arc(0, -2.2, 4.4, -Math.PI * .86, -Math.PI * .14); ctx.stroke();
+  // string pulled back by draw strength
+  const tipL = [Math.cos(-Math.PI * .86) * 4.4, -2.2 + Math.sin(-Math.PI * .86) * 4.4];
+  const tipR = [Math.cos(-Math.PI * .14) * 4.4, -2.2 + Math.sin(-Math.PI * .14) * 4.4];
+  const pull = -3.2 + draw * 5.4;
+  ctx.strokeStyle = 'rgba(241,234,214,.9)'; ctx.lineWidth = .18;
+  ctx.beginPath(); ctx.moveTo(tipL[0], tipL[1]); ctx.lineTo(0, pull); ctx.lineTo(tipR[0], tipR[1]); ctx.stroke();
+  if (state.phase === 'aim') {
+    ctx.strokeStyle = '#e9dcc0'; ctx.lineWidth = .4; ctx.beginPath(); ctx.moveTo(0, pull); ctx.lineTo(0, pull - 7.6); ctx.stroke();
+    ctx.fillStyle = '#b8bcc2'; ctx.beginPath(); ctx.moveTo(0, pull - 8.6); ctx.lineTo(-.55, pull - 7.4); ctx.lineTo(.55, pull - 7.4); ctx.fill();
+  }
+  // draw hand
+  ctx.strokeStyle = '#d8b48a'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(1.6, .8); ctx.lineTo(.3, pull); ctx.stroke();
+  // head with hood
+  ctx.fillStyle = '#244731'; ctx.beginPath(); ctx.arc(0, .6, 2, 0, 7); ctx.fill();
+  ctx.fillStyle = '#6b4a2c'; ctx.beginPath(); ctx.arc(0, .2, 1.3, 0, 7); ctx.fill();
+  ctx.restore();
+}
+function drawFlight(dt) {
+  const f = state.flight; if (!f) return;
+  f.t += dt; const k = Math.min(1, f.t / f.T);
+  const x = world.ax + f.sx * f.range * k + f.drift * k * k;
+  const y = world.ay - f.cy * f.range * k;
+  const h = 4 * k * (1 - k);
+  const vx = f.sx * f.range + 2 * f.drift * k, vy = -f.cy * f.range;
+  const ang = Math.atan2(vx, -vy);
+  ctx.fillStyle = 'rgba(0,0,0,.25)'; ctx.beginPath(); ctx.ellipse(x + h * 3, y + h * 3, .8, 2.4, ang, 0, 7); ctx.fill();
+  drawArrow(x, y, ang, 1 + h * .7, Monetize.equipped.fletch);
+  if (k >= 1) land();
+}
+function drawPopups(dt) {
+  ctx.textAlign = 'center';
+  state.popups = state.popups.filter(p => (p.t += dt) < 1.3);
+  for (const p of state.popups) {
+    ctx.globalAlpha = 1 - p.t / 1.3;
+    ctx.font = `400 ${p.text.length > 3 ? 5 : 7}px "Bowlby One SC", Impact, sans-serif`;
+    ctx.fillStyle = 'rgba(0,0,0,.45)'; ctx.fillText(p.text, p.x + .4, p.y - 5 - p.t * 6 + .4);
+    ctx.fillStyle = p.good ? '#f4c331' : '#f1ead6'; ctx.fillText(p.text, p.x, p.y - 5 - p.t * 6);
+  }
+  ctx.globalAlpha = 1;
+}
+function drawBanner(dt) {
+  if (!bannerData) return;
+  bannerData.t += dt; const t = bannerData.t; if (t > 1.8) { bannerData = null; return; }
+  const a = Math.min(1, t * 5, (1.8 - t) * 4);
+  const y = world.h * .42;
+  ctx.globalAlpha = a;
+  ctx.fillStyle = 'rgba(18,33,26,.82)'; ctx.fillRect(0, y - 8, 100, 15);
+  ctx.textAlign = 'center'; ctx.fillStyle = '#f4c331'; ctx.font = '400 7px "Bowlby One SC", Impact, sans-serif'; ctx.fillText(bannerData.title, 50, y + .5);
+  ctx.fillStyle = '#f1ead6'; ctx.font = '600 3.4px "Barlow Condensed", sans-serif'; ctx.fillText(bannerData.sub, 50, y + 5);
+  ctx.globalAlpha = 1;
+}
+
+/* ---------- Loop ---------- */
+let last = performance.now();
+function frame(now) {
+  const dt = Math.min(.05, (now - last) / 1000); last = now;
+  readTilt();
+  if (state.phase === 'aim') {
+    state.timeLeft -= dt;
+    const c = Math.ceil(state.timeLeft);
+    if (c < state.lastTick) { state.lastTick = c; if (c <= 3 && c > 0) sfx.tick(); }
+    if (state.timeLeft <= 0) { state.timeLeft = 0; loose(); }
+  }
+  const s = world.scale * world.dpr;
+  ctx.setTransform(s, 0, 0, s, 0, 0);
+  drawField(); drawWind(dt); drawTarget(); drawFlag(); drawStuck(); drawPreview(); drawArcher(); drawFlight(dt); drawWindGauge(); drawPopups(dt); drawBanner(dt);
+  hudLive();
+  requestAnimationFrame(frame);
+}
+
+/* ---------- Title ---------- */
+function titleScreen() {
+  showOverlay(`
+    <div class="card">
+      <h1>Bowman</h1>
+      <p>Three arrows. One target. The wind gets worse every round.</p>
+      <div class="how">
+        <b>Aim</b><span>Tilt the phone left or right.</span>
+        <b>Draw</b><span>Tilt the top toward you to pull harder, away to ease off.</span>
+        <b>Loose</b><span>The arrow flies when the timer runs out, or tap the timer.</span>
+        <b>Wind</b><span>The dotted arc ignores wind. Aim into it.</span>
+      </div>
+      <div class="seg" role="group" aria-label="Aim time"><span class="lbl">Aim time</span>
+        <button id="t10" aria-pressed="${CONFIG.AIM_SECONDS === 10}">10 s</button>
+        <button id="t5" aria-pressed="${CONFIG.AIM_SECONDS === 5}">5 s</button>
+      </div>
+      <button class="btn" id="startBtn">Start</button>
+      <p style="font-size:15px;color:var(--muted)">Hold the phone the way you like before tapping Start. That angle becomes center.</p>
+    </div>`);
+  const setT = v => { CONFIG.AIM_SECONDS = v; store.set('aim', v); $('t10').setAttribute('aria-pressed', v === 10); $('t5').setAttribute('aria-pressed', v === 5); };
+  $('t10').onclick = () => setT(10); $('t5').onclick = () => setT(5);
+  $('startBtn').onclick = async () => {
+    audioInit();
+    const ok = await enableTilt();   // must run inside the tap for iOS permission
+    if (ok) { input.mode = 'tilt'; recenter(); $('recenter').hidden = false; }
+    else { input.mode = 'touch'; toast('Tilt isn\'t available here. Drag to aim: sideways turns, pulling down draws harder.', 4500); }
+    try { await navigator.wakeLock?.request('screen'); } catch {}
+    hideOverlay(); startGame();
+  };
+}
+
+resize(); placeTarget(false); newWind(); hud(); titleScreen();
+requestAnimationFrame(frame);
+</script>
+</body></html>
