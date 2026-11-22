@@ -68,7 +68,7 @@ h2{font-family:var(--display);font-weight:400;font-size:32px;line-height:1;margi
 
 <div id="app">
   <div class="bar top">
-    <div class="stack"><span class="lbl" id="roundLbl">Round 1</span><span class="val" id="distVal">— m</span></div>
+    <div class="stack"><span class="lbl">Round</span><span class="val" id="roundLbl">1</span></div>
     <div class="stack" style="align-items:center"><span class="lbl">Arrows</span><div id="quiver"></div></div>
     <div class="stack right"><span class="lbl">Cleared</span><span class="val" id="scoreVal">0</span></div>
   </div>
@@ -97,9 +97,11 @@ const CONFIG = {
   REWARDED_EXTRA_ARROW: true,
   METERS_PER_UNIT: 0.5,     // field is 100 units wide = 50 m
   // ---- Difficulty knobs (field units: the field is 100 wide) ----
-  TARGET_R_START: 8,        // target radius in round 1
-  TARGET_R_SHRINK: 0.5,     // radius lost per round
-  TARGET_R_MIN: 3.5,        // smallest the target gets
+  TARGET_R_START: 6,        // target radius in round 1
+  TARGET_R_SHRINK: 0.4,     // radius lost per round
+  TARGET_R_MIN: 2.5,        // smallest the target gets
+  WIND_EFFECT: 0.255,       // sideways push per wind mph per second in the air (was 0.085, tripled)
+  REWARD_ARROWS: 3,         // arrows granted by watching a rewarded ad
   TARGET_DISTANCE: 1.0,     // target sits at this share of the field's length (1.0 = far end), the same every round
   MOVE_FROM_ROUND: 9999,    // moving target is OFF (set e.g. 3 to slide it from round 3)
   MOVE_AMP_START: 6,        // how far it slides each way when it starts moving
@@ -121,7 +123,7 @@ const Monetize = {
     await adPlaceholder('Ad break', 'Interstitial ad plays here between rounds.', 3, true);
   },
   async rewarded() {                      // resolves true when the viewer earns the reward
-    return adPlaceholder('Rewarded ad', 'Watch to earn 1 extra arrow.', 5, false);
+    return adPlaceholder('Rewarded ad', `Watch to earn ${CONFIG.REWARD_ARROWS} more arrows.`, 5, false);
   },
   // Future shop: cosmetic items only change how things are drawn.
   shop: [
@@ -305,7 +307,7 @@ function loose() {
   state.phase = 'flight'; $('loose').disabled = true;
   const deg = input.deg, range = rangeFor(deg * Math.PI / 180);
   const T = .55 + range / 130;                         // seconds in the air
-  const drift = state.wind * .085 * T;                 // sideways push in field units
+  const drift = state.wind * CONFIG.WIND_EFFECT * T;                 // sideways push in field units
   const rad = deg * Math.PI / 180;
   state.flight = { t: 0, T, range, drift, sx: Math.sin(rad), cy: Math.cos(rad), x: world.ax, y: world.ay, h: 0, ang: rad };
   state.arrows--; sfx.twang(); hud();
@@ -343,14 +345,14 @@ function gameOver() {
       <h2>Out of arrows</h2>
       <div><div class="lbl">Rounds cleared</div><div class="big">${state.score}</div></div>
       <p>Best: ${state.best} ${state.best === 1 ? 'round' : 'rounds'}</p>
-      ${canReward ? '<button class="btn" id="rewardBtn">Watch ad for 1 more arrow</button>' : ''}
+      ${canReward ? `<button class="btn" id="rewardBtn">Watch ad for ${CONFIG.REWARD_ARROWS} more arrows</button>` : ''}
       <button class="btn ${canReward ? 'ghost' : ''}" id="againBtn">Play again</button>
     </div>`);
   $('againBtn').onclick = () => { hideOverlay(); startGame(); };
   if (canReward) $('rewardBtn').onclick = async () => {
     state.rewardUsed = true;
     const ok = await Monetize.rewarded();
-    if (ok) { hideOverlay(); state.arrows = 1; startAim(); toast('One more arrow'); } else gameOver();
+    if (ok) { hideOverlay(); state.arrows = CONFIG.REWARD_ARROWS; startAim(); toast(`${CONFIG.REWARD_ARROWS} more arrows`); } else gameOver();
   };
 }
 
@@ -377,9 +379,8 @@ function adPlaceholder(title, text, secs, skippable) {
 
 /* ---------- HUD ---------- */
 function hud() {
-  $('roundLbl').textContent = `Round ${state.round}`;
+  $('roundLbl').textContent = state.round;
   const t = state.target;
-  $('distVal').textContent = t ? `${Math.round((world.ay - t.y) * CONFIG.METERS_PER_UNIT)} m` : '— m';
   $('scoreVal').textContent = state.score;
   $('bestVal').textContent = Math.max(state.best, state.score);
   $('stage').setAttribute('aria-label', `Wind ${Math.abs(state.wind)} mph to the ${state.wind < 0 ? 'left' : 'right'}`);
@@ -404,12 +405,6 @@ function drawField() {
   ctx.fillStyle = 'rgba(241,234,214,.18)'; ctx.fillRect(4, 0, .35, H); ctx.fillRect(95.65, 0, .35, H);
   // shooting line
   ctx.fillStyle = 'rgba(241,234,214,.75)'; ctx.fillRect(0, world.ay + 5, W, .6);
-  // distance marks every 10 m
-  ctx.font = '600 3px "Barlow Condensed", sans-serif'; ctx.fillStyle = 'rgba(241,234,214,.55)'; ctx.textAlign = 'left';
-  for (let m = 10; m * 2 < world.ay; m += 10) {
-    const y = world.ay - m / CONFIG.METERS_PER_UNIT;
-    ctx.fillRect(4, y, 2.5, .3); ctx.fillText(m + ' m', 7, y + 1);
-  }
 }
 let clock = 0;
 function drawWind(dt) {
@@ -430,7 +425,7 @@ function drawFlag() {
   const t = state.target; if (!t) return;
   const w = state.wind, mag = Math.abs(w), dir = Math.sign(w || 1);
   const px = t.x + dir * (t.r + 3), py = t.y - t.r * .2;      // pole beside the target, cloth streams downwind
-  const len = 4 + mag * .14, segs = 12;
+  const len = 1.5 + Math.min(mag, 100) * .34, segs = 12;   // ~5 long at 10 mph, ~35 long at 99 mph
   const amp = .25 + (1 - Math.min(1, mag / 60)) * .5;           // light wind = floppy, strong = taut
   // shadow
   ctx.fillStyle = 'rgba(0,0,0,.22)'; ctx.beginPath(); ctx.arc(px + .6, py + .6, .7, 0, 7); ctx.fill();
@@ -520,7 +515,7 @@ function drawWindMeter() {                     // small meter right beside the a
   const fill = mag / 100 * len / 2;
   ctx.fillStyle = col; ctx.fillRect(w < 0 ? cx - fill : cx, y - 1, fill, 2);
   ctx.fillStyle = '#0b0b0b'; ctx.fillRect(cx - .5, y - 2, 1, 4);
-  ctx.textAlign = 'center'; ctx.fillStyle = col; ctx.font = '700 3.6px "Barlow Condensed", sans-serif';
+  ctx.textAlign = 'center'; ctx.fillStyle = '#ffffff'; ctx.font = '700 4.2px "Barlow Condensed", sans-serif';
   ctx.fillText(`${Math.abs(w)} mph`, cx, y + 5.6);
 }
 function drawArcher() {
