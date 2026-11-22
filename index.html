@@ -4,7 +4,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bowlby+One+SC&family=Barlow+Condensed:wght@500;600;700&display=swap">
 <style>
-/* Layout: one-screen portrait game. Scoreboard bar on top, field canvas fills the middle, shooting bar (wind / timer / draw) at the bottom. Single deliberate look: dusk archery range. */
+/* Layout: one-screen portrait game. Scoreboard bar on top, field canvas fills the middle, shooting bar (tilt / timer / best) at the bottom. Single deliberate look: dusk archery range. */
 :root{
   --forest:#12211a; --forest-2:#1b3125; --line:#2c4a37;
   --chalk:#f1ead6; --muted:#9db4a2;
@@ -70,7 +70,7 @@ h2{font-family:var(--display);font-weight:400;font-size:32px;line-height:1;margi
   <div class="bar top">
     <div class="stack"><span class="lbl" id="roundLbl">Round 1</span><span class="val" id="distVal">— m</span></div>
     <div class="stack" style="align-items:center"><span class="lbl">Arrows</span><div id="quiver"></div></div>
-    <div class="stack right"><span class="lbl">Score</span><span class="val" id="scoreVal">0</span></div>
+    <div class="stack right"><span class="lbl">Cleared</span><span class="val" id="scoreVal">0</span></div>
   </div>
   <div class="windrow" aria-label="Wind">
     <span class="lbl">Wind</span>
@@ -85,15 +85,15 @@ h2{font-family:var(--display);font-weight:400;font-size:32px;line-height:1;margi
   <div class="bar bottom">
     <div class="stack"><span class="lbl" id="tiltStatus">Drag mode</span><button id="recenter" hidden>Recenter tilt</button><button id="tiltBtn">Enable tilt</button></div>
     <button id="loose" disabled aria-label="Loose arrow now"><span><b id="timeVal">10</b><small>Loose</small></span></button>
-    <div class="stack right"><span class="lbl">Draw</span><div class="meter"><i id="powerBar"></i></div><span class="lbl" id="aimVal" style="color:var(--chalk)">Aim 0°</span></div>
+    <div class="stack right"><span class="lbl">Best</span><span class="val" id="bestVal">0</span><span class="lbl" id="aimVal" style="color:var(--chalk)">Aim 0°</span></div>
   </div>
 </div>
 
 <script>
 /* ============================================================
    BOWMAN prototype
-   Tilt left/right = aim direction. Tilt top toward you = draw harder.
-   Fallback: drag (left/right aims, pull down draws) or arrow keys + space.
+   Tilt left/right = aim direction (draw strength is fixed). Score = rounds cleared.
+   Test-only fallback: drag sideways or arrow keys + space. Remove for release.
    ============================================================ */
 const CONFIG = {
   AIM_SECONDS: 10,          // switchable to 5 on the title screen
@@ -101,6 +101,18 @@ const CONFIG = {
   INTERSTITIAL_EVERY: 3,    // show an ad break after every N cleared rounds
   REWARDED_EXTRA_ARROW: true,
   METERS_PER_UNIT: 0.5,     // field is 100 units wide = 50 m
+  // ---- Difficulty knobs (field units: the field is 100 wide) ----
+  TARGET_R_START: 8,        // target radius in round 1
+  TARGET_R_SHRINK: 0.5,     // radius lost per round
+  TARGET_R_MIN: 3.5,        // smallest the target gets
+  MOVE_FROM_ROUND: 3,       // target starts sliding side to side in this round
+  MOVE_AMP_START: 6,        // how far it slides each way when it starts moving
+  MOVE_AMP_STEP: 2,         // extra slide per round after that
+  MOVE_AMP_MAX: 26,
+  MOVE_SPEED_START: 0.7,    // radians per second (0.7 = one full sweep about every 9 s)
+  MOVE_SPEED_STEP: 0.12,
+  MOVE_SPEED_MAX: 2.2,
+  WIND_BASE: 8, WIND_STEP: 12, WIND_MAX: 99,   // max wind = BASE + STEP * round
 };
 
 /* ---------- Monetization hooks (placeholders, no SDK yet) ----------
@@ -185,7 +197,7 @@ const TILT_MSG = {
   insecure: 'Tilt needs the https:// link. Drag to aim for now.',
   denied: 'Safari has remembered a "no" for motion on this site, so it won\'t ask again. To reset it: Settings > Apps > Safari > Advanced > Website Data, find github.io, swipe left and Delete. Then close all Safari tabs for this game, open the link again, tap Start and choose Allow.',
   error: 'Motion access failed. Reload and tap Start again.',
-  nodata: 'No motion data from this device. Drag to aim: sideways turns, pulling down draws harder.',
+  nodata: 'No motion data from this device. Drag sideways to aim.',
 };
 function tiltReport(res) {
   const D = typeof DeviceOrientationEvent !== 'undefined';
@@ -212,7 +224,6 @@ function recenter() { input.b0 = input.beta; input.g0 = input.gamma; }
 function readTilt() {
   if (input.mode !== 'tilt') return;
   input.deg = clamp((input.g0 - input.gamma) * 1.1, -35, 35);   // swapped per Dustin: tilt left aims right
-  input.power = clamp(.5 + (input.beta - input.b0) / 45, 0, 1);
 }
 let drag = null;
 const stage = $('stage');
@@ -224,15 +235,12 @@ stage.addEventListener('pointerdown', e => {
 stage.addEventListener('pointermove', e => {
   if (!drag || state.phase !== 'aim') return;
   input.deg = clamp(drag.deg + (e.clientX - drag.x) * .22, -35, 35);
-  input.power = clamp(drag.p + (e.clientY - drag.y) / 320, 0, 1);
 });
 ['pointerup', 'pointercancel'].forEach(t => stage.addEventListener(t, () => drag = null));
 window.addEventListener('keydown', e => {
   if (state.phase !== 'aim') return;
   if (e.key === 'ArrowLeft') input.deg = clamp(input.deg - 1, -35, 35);
   else if (e.key === 'ArrowRight') input.deg = clamp(input.deg + 1, -35, 35);
-  else if (e.key === 'ArrowDown') input.power = clamp(input.power + .01, 0, 1);
-  else if (e.key === 'ArrowUp') input.power = clamp(input.power - .01, 0, 1);
   else if (e.key === ' ' || e.key === 'Enter') { loose(); }
   else return;
   e.preventDefault();
@@ -258,43 +266,49 @@ window.addEventListener('resize', resize);
 /* ---------- Game state ---------- */
 const state = {
   phase: 'title', round: 1, score: 0, arrows: CONFIG.ARROWS_PER_ROUND, wind: 0,
-  target: null, stuck: [], flight: null, timeLeft: 0, rewardUsed: false, best: store.get('best', 0),
+  target: null, stuck: [], flight: null, timeLeft: 0, rewardUsed: false, best: store.get('bestRounds', 0),
   popups: [], lastTick: 0, particles: [],
 };
 for (let i = 0; i < 60; i++) state.particles.push({ x: Math.random() * 100, y: Math.random(), len: rand(.5, 1.2) });
 
-function rangeFor(p) { return 18 + p * (world.maxDist * 1.2 - 18); }
+// Fixed draw: every arrow carries exactly to the target's line. Only direction (and wind) decide a hit.
+function rangeFor(rad) { const t = state.target; return t ? (world.ay - t.y) / Math.cos(rad) : 60; }
 function placeTarget(keep) {
   const t = state.target;
   if (keep) { t.y = world.ay - t.frac * world.maxDist; return; }
   const r = state.round;
   const frac = clamp(rand(.5, .68) + r * .04, .5, 1);
   const spread = Math.min(4 + r * 3.5, 28);
-  state.target = { frac, x: 50 + rand(-spread, spread), y: world.ay - frac * world.maxDist, r: Math.max(5.5, 12.5 - r * .8) };
+  const radius = Math.max(CONFIG.TARGET_R_MIN, CONFIG.TARGET_R_START - (r - 1) * CONFIG.TARGET_R_SHRINK);
+  const moving = r >= CONFIG.MOVE_FROM_ROUND, k = r - CONFIG.MOVE_FROM_ROUND;
+  const amp = moving ? Math.min(CONFIG.MOVE_AMP_MAX, CONFIG.MOVE_AMP_START + k * CONFIG.MOVE_AMP_STEP) : 0;
+  const speed = moving ? Math.min(CONFIG.MOVE_SPEED_MAX, CONFIG.MOVE_SPEED_START + k * CONFIG.MOVE_SPEED_STEP) : 0;
+  const base = clamp(50 + rand(-spread, spread), 8 + amp + radius, 92 - amp - radius);
+  state.target = { frac, base, x: base, y: world.ay - frac * world.maxDist, r: radius, amp, speed, phase: rand(0, 6.28) };
 }
 function newWind() {
-  const maxW = Math.min(8 + state.round * 12, 99);
+  const maxW = Math.min(CONFIG.WIND_BASE + state.round * CONFIG.WIND_STEP, CONFIG.WIND_MAX);
   state.wind = Math.round(rand(.45, 1) * maxW) * (Math.random() < .5 ? -1 : 1);
 }
 function startGame() {
-  Object.assign(state, { round: 1, score: 0, rewardUsed: false, stuck: [] });
+  Object.assign(state, { round: 1, score: 0, rewardUsed: false, stuck: [] });   // score = rounds cleared
   startRound();
 }
 function startRound() {
   state.arrows = CONFIG.ARROWS_PER_ROUND; state.stuck = [];
   placeTarget(false); newWind();
-  banner(`Round ${state.round}`, state.round === 1 ? 'Hit the target' : 'Wind is picking up');
+  banner(`Round ${state.round}`, state.round === 1 ? 'Hit the target' : state.round === CONFIG.MOVE_FROM_ROUND ? 'The target is moving now' : 'Wind is picking up');
   startAim();
 }
 function startAim() {
   state.phase = 'aim'; state.timeLeft = CONFIG.AIM_SECONDS; state.lastTick = Math.ceil(state.timeLeft);
-  if (input.mode === 'touch') { input.deg = 0; input.power = .5; }
+  if (input.mode === 'touch') { input.deg = 0; }
   $('loose').disabled = false; hud();
 }
 function loose() {
   if (state.phase !== 'aim') return;
   state.phase = 'flight'; $('loose').disabled = true;
-  const deg = input.deg, p = input.power, range = rangeFor(p);
+  const deg = input.deg, range = rangeFor(deg * Math.PI / 180);
   const T = .55 + range / 130;                         // seconds in the air
   const drift = state.wind * .085 * T;                 // sideways push in field units
   const rad = deg * Math.PI / 180;
@@ -304,19 +318,16 @@ function loose() {
 function land() {
   const f = state.flight, t = state.target;
   const lx = world.ax + f.sx * f.range + f.drift, ly = world.ay - f.cy * f.range;
-  const d = Math.hypot(lx - t.x, ly - t.y);
-  const hit = d <= t.r;
-  const ring = hit ? Math.max(1, 10 - Math.floor(d / t.r * 10)) : 0;
-  state.stuck.push({ x: lx, y: ly, hit, ang: f.ang + Math.atan2(f.drift, f.range) });
+  const hit = Math.abs(lx - t.x) <= t.r;          // arrow reaches the target's line; only sideways error matters
+  state.stuck.push({ x: lx, y: ly, rel: lx - t.x, hit, ang: f.ang + Math.atan2(f.drift, f.range) });
   state.flight = null;
+  state.phase = 'result';
   if (hit) {
-    const bonus = state.arrows * 5;                    // unused arrows are worth 5 each
-    const pts = ring + bonus;
-    state.score += pts; sfx.thunk(); setTimeout(sfx.win, 200);
-    popup(lx, ly, ring === 10 ? 'BULLSEYE!' : String(ring), true);
-    state.phase = 'result'; hud();
+    state.score++; sfx.thunk(); setTimeout(sfx.win, 200);
+    popup(lx, ly, 'HIT!', true);
+    hud();
     setTimeout(async () => {
-      banner(`+${pts}`, bonus ? `${ring} for the ring, ${bonus} for unused arrows` : `${ring} for the ring`);
+      banner('Round cleared', `${state.score} cleared so far`);
       await wait(1300);
       const cleared = state.round;
       state.round++;
@@ -324,20 +335,19 @@ function land() {
       startRound();
     }, 700);
   } else {
-    sfx.miss(); popup(lx, ly, 'Miss', false);
-    state.phase = 'result'; hud();
+    sfx.miss(); popup(lx, ly, 'Miss', false); hud();
     setTimeout(() => { state.arrows > 0 ? startAim() : gameOver(); }, 1100);
   }
 }
 function gameOver() {
   state.phase = 'over';
-  if (state.score > state.best) { state.best = state.score; store.set('best', state.best); }
+  if (state.score > state.best) { state.best = state.score; store.set('bestRounds', state.best); }
   const canReward = CONFIG.REWARDED_EXTRA_ARROW && !state.rewardUsed;
   showOverlay(`
     <div class="card">
       <h2>Out of arrows</h2>
-      <div><div class="lbl">Score</div><div class="big">${state.score}</div></div>
-      <p>Reached round ${state.round} &middot; best ${state.best}</p>
+      <div><div class="lbl">Rounds cleared</div><div class="big">${state.score}</div></div>
+      <p>Best: ${state.best} ${state.best === 1 ? 'round' : 'rounds'}</p>
       ${canReward ? '<button class="btn" id="rewardBtn">Watch ad for 1 more arrow</button>' : ''}
       <button class="btn ${canReward ? 'ghost' : ''}" id="againBtn">Play again</button>
     </div>`);
@@ -376,6 +386,7 @@ function hud() {
   const t = state.target;
   $('distVal').textContent = t ? `${Math.round((world.ay - t.y) * CONFIG.METERS_PER_UNIT)} m` : '— m';
   $('scoreVal').textContent = state.score;
+  $('bestVal').textContent = Math.max(state.best, state.score);
   const w = state.wind, pct = Math.min(Math.abs(w), 100) / 100 * 50;   // full half-track = wind 100
   $('windVal').textContent = (w > 0 ? '+' : '') + w;
   $('windVal').className = 'val ' + (w > 0 ? 'pos' : w < 0 ? 'neg' : '');
@@ -388,7 +399,6 @@ function hud() {
   }
 }
 function hudLive() {
-  $('powerBar').style.width = Math.round(input.power * 100) + '%';
   const r = Math.round(input.deg);
   $('aimVal').textContent = `Aim ${r > 0 ? 'R ' : r < 0 ? 'L ' : ''}${Math.abs(r)}°`;
   const secs = state.phase === 'aim' ? Math.ceil(state.timeLeft) : CONFIG.AIM_SECONDS;
@@ -491,6 +501,7 @@ function drawArrow(x, y, ang, scale, fletch) {
 function drawStuck() {
   for (const s of state.stuck) {
     if (s.hit) {
+      s.x = state.target.x + s.rel;               // ride along with a moving target
       ctx.fillStyle = 'rgba(0,0,0,.35)'; ctx.beginPath(); ctx.arc(s.x + .5, s.y + .5, .7, 0, 7); ctx.fill();
       ctx.fillStyle = Monetize.equipped.fletch; ctx.beginPath(); ctx.arc(s.x, s.y, .9, 0, 7); ctx.fill();
       ctx.fillStyle = '#e9dcc0'; ctx.beginPath(); ctx.arc(s.x, s.y, .35, 0, 7); ctx.fill();
@@ -501,7 +512,7 @@ function drawStuck() {
 }
 function drawPreview() {
   if (state.phase !== 'aim') return;
-  const range = rangeFor(input.power), rad = input.deg * Math.PI / 180;
+  const rad = input.deg * Math.PI / 180, range = rangeFor(rad);
   const sx = Math.sin(rad), cy = Math.cos(rad);
   const n = 22;
   for (let i = 1; i <= n; i++) {
@@ -518,7 +529,7 @@ function drawPreview() {
 function drawArcher() {
   const x = world.ax, y = world.ay;
   const aim = (state.phase === 'aim' ? input.deg : (state.flight ? state.flight.ang * 180 / Math.PI : input.deg)) * Math.PI / 180;
-  const draw = state.phase === 'aim' ? input.power : 0;
+  const draw = state.phase === 'aim' ? .8 : 0;
   ctx.fillStyle = 'rgba(0,0,0,.28)'; ctx.beginPath(); ctx.ellipse(x + 1.2, y + 1.4, 5.2, 3, 0, 0, 7); ctx.fill();
   ctx.save(); ctx.translate(x, y); ctx.rotate(aim);
   // shoulders + cloak
@@ -586,6 +597,8 @@ let last = performance.now();
 function frame(now) {
   const dt = Math.min(.05, (now - last) / 1000); last = now;
   readTilt();
+  const tg = state.target;
+  if (tg && tg.amp) tg.x = tg.base + tg.amp * Math.sin(now / 1000 * tg.speed + tg.phase);   // side-to-side slide
   if (state.phase === 'aim') {
     state.timeLeft -= dt;
     const c = Math.ceil(state.timeLeft);
@@ -604,10 +617,9 @@ function titleScreen() {
   showOverlay(`
     <div class="card">
       <h1>Bowman</h1>
-      <p>Three arrows. One target. The wind gets worse every round.</p>
+      <p>Three arrows per round. Hit the target to clear it. See how many rounds you can clear.</p>
       <div class="how">
-        <b>Aim</b><span>Tilt the phone left or right.</span>
-        <b>Draw</b><span>Tilt the top toward you to pull harder, away to ease off.</span>
+        <b>Aim</b><span>Tilt the phone left or right. Every arrow carries to the target, so only direction matters.</span>
         <b>Loose</b><span>The arrow flies when the timer runs out, or tap the timer.</span>
         <b>Wind</b><span>The dotted arc ignores wind. Aim into it.</span>
       </div>
