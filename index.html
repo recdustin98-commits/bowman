@@ -211,7 +211,7 @@ function setTiltMode(on) {
 function recenter() { input.b0 = input.beta; input.g0 = input.gamma; }
 function readTilt() {
   if (input.mode !== 'tilt') return;
-  input.deg = clamp((input.gamma - input.g0) * 1.1, -35, 35);
+  input.deg = clamp((input.g0 - input.gamma) * 1.1, -35, 35);   // swapped per Dustin: tilt left aims right
   input.power = clamp(.5 + (input.beta - input.b0) / 45, 0, 1);
 }
 let drag = null;
