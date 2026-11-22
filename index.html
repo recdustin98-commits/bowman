@@ -28,16 +28,16 @@ body{font-family:var(--ui);-webkit-user-select:none;user-select:none;-webkit-tou
 #quiver i.spent{background:var(--line)}
 #stage{position:relative;flex:1;min-height:0}
 canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
-.windrow{display:grid;grid-template-columns:auto 1fr 3.2em;align-items:center;gap:12px;background:var(--forest);border-bottom:1px solid var(--line);padding-block:8px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.windrow{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:12px;background:var(--forest);border-bottom:1px solid var(--line);padding-block:8px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
 .gauge{position:relative;height:30px;min-width:0}
 .gauge .track{position:absolute;left:0;right:0;top:9px;height:12px;background:#d6d6d0;border-radius:2px;
   background-image:repeating-linear-gradient(90deg,transparent 0 calc(12.5% - 1px),rgba(0,0,0,.18) calc(12.5% - 1px) 12.5%)}
 .gauge .pos,.gauge .neg{position:absolute;top:9px;height:12px;width:0;transition:width .4s}
 .gauge .pos{left:50%;background:#e8231c}
-.gauge .neg{right:50%;background:#2160a8}
+.gauge .neg{right:50%;background:#f4c331}
 .gauge .mid{position:absolute;left:50%;top:0;width:6px;height:30px;margin-left:-3px;background:#0b0b0b;border-radius:1px}
-#windVal{text-align:right}
-#windVal.pos{color:#ff5a4f}#windVal.neg{color:#6fb0ff}
+#windVal{text-align:right;white-space:nowrap}
+#windVal.pos{color:#ff5a4f}#windVal.neg{color:#f4c331}
 #loose{width:74px;height:74px;border-radius:50%;border:0;padding:0;cursor:pointer;background:conic-gradient(var(--gold) calc(var(--t,1)*360deg), var(--line) 0);display:grid;place-items:center;font:inherit;color:var(--forest)}
 #loose span{width:62px;height:62px;border-radius:50%;background:var(--chalk);display:flex;flex-direction:column;align-items:center;justify-content:center;line-height:1}
 #loose b{font-size:28px;font-variant-numeric:tabular-nums}
@@ -105,7 +105,8 @@ const CONFIG = {
   TARGET_R_START: 8,        // target radius in round 1
   TARGET_R_SHRINK: 0.5,     // radius lost per round
   TARGET_R_MIN: 3.5,        // smallest the target gets
-  MOVE_FROM_ROUND: 3,       // target starts sliding side to side in this round
+  TARGET_DISTANCE: 0.8,     // target sits at this share of the field's length, the same every round
+  MOVE_FROM_ROUND: 9999,    // moving target is OFF (set e.g. 3 to slide it from round 3)
   MOVE_AMP_START: 6,        // how far it slides each way when it starts moving
   MOVE_AMP_STEP: 2,         // extra slide per round after that
   MOVE_AMP_MAX: 26,
@@ -277,13 +278,12 @@ function placeTarget(keep) {
   const t = state.target;
   if (keep) { t.y = world.ay - t.frac * world.maxDist; return; }
   const r = state.round;
-  const frac = clamp(rand(.5, .68) + r * .04, .5, 1);
-  const spread = Math.min(4 + r * 3.5, 28);
+  const frac = CONFIG.TARGET_DISTANCE;
   const radius = Math.max(CONFIG.TARGET_R_MIN, CONFIG.TARGET_R_START - (r - 1) * CONFIG.TARGET_R_SHRINK);
   const moving = r >= CONFIG.MOVE_FROM_ROUND, k = r - CONFIG.MOVE_FROM_ROUND;
   const amp = moving ? Math.min(CONFIG.MOVE_AMP_MAX, CONFIG.MOVE_AMP_START + k * CONFIG.MOVE_AMP_STEP) : 0;
   const speed = moving ? Math.min(CONFIG.MOVE_SPEED_MAX, CONFIG.MOVE_SPEED_START + k * CONFIG.MOVE_SPEED_STEP) : 0;
-  const base = clamp(50 + rand(-spread, spread), 8 + amp + radius, 92 - amp - radius);
+  const base = 50;                                  // always straight down the lane
   state.target = { frac, base, x: base, y: world.ay - frac * world.maxDist, r: radius, amp, speed, phase: rand(0, 6.28) };
 }
 function newWind() {
@@ -388,7 +388,7 @@ function hud() {
   $('scoreVal').textContent = state.score;
   $('bestVal').textContent = Math.max(state.best, state.score);
   const w = state.wind, pct = Math.min(Math.abs(w), 100) / 100 * 50;   // full half-track = wind 100
-  $('windVal').textContent = (w > 0 ? '+' : '') + w;
+  $('windVal').textContent = `${Math.abs(w)} mph`;   // direction is shown by color: red = right, yellow = left
   $('windVal').className = 'val ' + (w > 0 ? 'pos' : w < 0 ? 'neg' : '');
   $('gPos').style.width = (w > 0 ? pct : 0) + '%';
   $('gNeg').style.width = (w < 0 ? pct : 0) + '%';
@@ -445,7 +445,7 @@ function drawFlag() {
   // shadow
   ctx.fillStyle = 'rgba(0,0,0,.22)'; ctx.beginPath(); ctx.arc(px + .6, py + .6, .7, 0, 7); ctx.fill();
   // cloth (top-down: a fluttering ribbon streaming downwind)
-  ctx.fillStyle = '#e2483b';
+  ctx.fillStyle = w < 0 ? '#f4c331' : '#e8231c';      // matches the wind meter: red = right, yellow = left
   ctx.beginPath();
   for (let i = 0; i <= segs; i++) {
     const f = i / segs, x = px + dir * len * f, y = py - 1.1 + Math.sin(clock * (4 + mag * .08) - f * 5) * amp * f * 1.6;
@@ -482,14 +482,8 @@ function drawTarget() {
   const t = state.target; if (!t) return;
   // stand shadow + legs
   ctx.fillStyle = 'rgba(0,0,0,.25)'; ctx.beginPath(); ctx.ellipse(t.x + 1.5, t.y + 2, t.r * 1.05, t.r * 1.05, 0, 0, 7); ctx.fill();
-  ctx.fillStyle = '#c9b78a'; ctx.beginPath(); ctx.arc(t.x, t.y, t.r * 1.08, 0, 7); ctx.fill();    // straw boss
-  const rings = ['#f6f1e4', '#f6f1e4', '#1d1d1d', '#1d1d1d', '#3ea2df', '#3ea2df', '#e2483b', '#e2483b', '#f4c331', '#f4c331'];
-  for (let i = 0; i < 10; i++) {
-    const rr = t.r * (10 - i) / 10;
-    ctx.fillStyle = rings[i]; ctx.beginPath(); ctx.arc(t.x, t.y, rr, 0, 7); ctx.fill();
-    ctx.strokeStyle = i === 3 ? 'rgba(255,255,255,.5)' : 'rgba(0,0,0,.25)'; ctx.lineWidth = .12; ctx.stroke();
-  }
-  ctx.fillStyle = '#1d1d1d'; ctx.fillRect(t.x - .25, t.y - .25, .5, .5);
+  ctx.fillStyle = '#f6f1e4'; ctx.beginPath(); ctx.arc(t.x, t.y, t.r, 0, 7); ctx.fill();   // one plain color, no scoring rings
+  ctx.strokeStyle = 'rgba(0,0,0,.45)'; ctx.lineWidth = .35; ctx.stroke();
 }
 function drawArrow(x, y, ang, scale, fletch) {
   ctx.save(); ctx.translate(x, y); ctx.rotate(ang); ctx.scale(scale, scale);
@@ -584,7 +578,7 @@ function drawBanner(dt) {
   if (!bannerData) return;
   bannerData.t += dt; const t = bannerData.t; if (t > 1.8) { bannerData = null; return; }
   const a = Math.min(1, t * 5, (1.8 - t) * 4);
-  const y = world.h * .42;
+  const y = world.h * .62;   // below the target, which now sits at a fixed spot
   ctx.globalAlpha = a;
   ctx.fillStyle = 'rgba(18,33,26,.82)'; ctx.fillRect(0, y - 8, 100, 15);
   ctx.textAlign = 'center'; ctx.fillStyle = '#f4c331'; ctx.font = '400 7px "Bowlby One SC", Impact, sans-serif'; ctx.fillText(bannerData.title, 50, y + .5);
