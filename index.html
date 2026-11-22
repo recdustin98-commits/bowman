@@ -28,7 +28,16 @@ body{font-family:var(--ui);-webkit-user-select:none;user-select:none;-webkit-tou
 #quiver i.spent{background:var(--line)}
 #stage{position:relative;flex:1;min-height:0}
 canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
-#windArrow{display:inline-block;transition:transform .3s}
+.windrow{display:grid;grid-template-columns:auto 1fr 3.2em;align-items:center;gap:12px;background:var(--forest);border-bottom:1px solid var(--line);padding-block:8px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px))}
+.gauge{position:relative;height:30px;min-width:0}
+.gauge .track{position:absolute;left:0;right:0;top:9px;height:12px;background:#d6d6d0;border-radius:2px;
+  background-image:repeating-linear-gradient(90deg,transparent 0 calc(12.5% - 1px),rgba(0,0,0,.18) calc(12.5% - 1px) 12.5%)}
+.gauge .pos,.gauge .neg{position:absolute;top:9px;height:12px;width:0;transition:width .4s}
+.gauge .pos{left:50%;background:#e8231c}
+.gauge .neg{right:50%;background:#2160a8}
+.gauge .mid{position:absolute;left:50%;top:0;width:6px;height:30px;margin-left:-3px;background:#0b0b0b;border-radius:1px}
+#windVal{text-align:right}
+#windVal.pos{color:#ff5a4f}#windVal.neg{color:#6fb0ff}
 #loose{width:74px;height:74px;border-radius:50%;border:0;padding:0;cursor:pointer;background:conic-gradient(var(--gold) calc(var(--t,1)*360deg), var(--line) 0);display:grid;place-items:center;font:inherit;color:var(--forest)}
 #loose span{width:62px;height:62px;border-radius:50%;background:var(--chalk);display:flex;flex-direction:column;align-items:center;justify-content:center;line-height:1}
 #loose b{font-size:28px;font-variant-numeric:tabular-nums}
@@ -52,9 +61,9 @@ h2{font-family:var(--display);font-weight:400;font-size:32px;line-height:1;margi
 .big{font-size:44px;font-weight:700;font-variant-numeric:tabular-nums;line-height:1}
 .ad{border:2px dashed var(--muted);border-radius:12px;padding-block:28px;padding-inline:16px;color:var(--muted)}
 #toast{position:absolute;left:50%;bottom:56px;transform:translateX(-50%);background:var(--chalk);color:var(--forest);font-weight:700;font-size:16px;padding:8px 14px;border-radius:10px;max-width:calc(100% - 32px);text-align:center;z-index:4;pointer-events:none;transition:opacity .3s}
-#recenter{position:absolute;right:max(10px,env(safe-area-inset-right,0px));bottom:10px;z-index:3;font:600 14px var(--ui);letter-spacing:.08em;text-transform:uppercase;background:rgba(18,33,26,.75);color:var(--chalk);border:1px solid var(--line);border-radius:8px;padding:6px 10px;cursor:pointer}
+#recenter{justify-self:start;font:600 13px var(--ui);letter-spacing:.08em;text-transform:uppercase;background:transparent;color:var(--chalk);border:1px solid var(--line);border-radius:8px;padding:6px 10px;cursor:pointer}
 [hidden]{display:none!important}
-@media (prefers-reduced-motion: reduce){#windArrow{transition:none}}
+@media (prefers-reduced-motion: reduce){.gauge .pos,.gauge .neg{transition:none}}
 </style>
 
 <div id="app">
@@ -63,14 +72,18 @@ h2{font-family:var(--display);font-weight:400;font-size:32px;line-height:1;margi
     <div class="stack" style="align-items:center"><span class="lbl">Arrows</span><div id="quiver"></div></div>
     <div class="stack right"><span class="lbl">Score</span><span class="val" id="scoreVal">0</span></div>
   </div>
+  <div class="windrow" aria-label="Wind">
+    <span class="lbl">Wind</span>
+    <div class="gauge" role="img" id="gauge" aria-label="Wind 0"><div class="track"></div><div class="neg" id="gNeg"></div><div class="pos" id="gPos"></div><div class="mid"></div></div>
+    <span class="val" id="windVal">0</span>
+  </div>
   <div id="stage">
     <canvas id="cv"></canvas>
     <div id="toast" hidden></div>
-    <button id="recenter" hidden>Recenter tilt</button>
     <div class="overlay" id="overlay"></div>
   </div>
   <div class="bar bottom">
-    <div class="stack"><span class="lbl">Wind</span><span class="val"><span id="windArrow">➜</span> <span id="windVal">0</span></span></div>
+    <div class="stack"><span class="lbl" id="tiltStatus">Drag mode</span><button id="recenter" hidden>Recenter tilt</button></div>
     <button id="loose" disabled aria-label="Loose arrow now"><span><b id="timeVal">10</b><small>Loose</small></span></button>
     <div class="stack right"><span class="lbl">Draw</span><div class="meter"><i id="powerBar"></i></div><span class="lbl" id="aimVal" style="color:var(--chalk)">Aim 0°</span></div>
   </div>
@@ -149,18 +162,34 @@ function onOrientation(e) {
   input.beta += (e.beta - input.beta) * .3;     // light smoothing
   input.gamma += (e.gamma - input.gamma) * .3;
 }
+// Returns 'ok' or a reason: 'unsupported' | 'insecure' | 'denied' | 'error' | 'nodata'.
+// Must be called synchronously from the tap: iOS only shows the Allow prompt inside a user gesture.
 async function enableTilt() {
-  try {
-    if (typeof DeviceOrientationEvent === 'undefined') return false;
-    if (typeof DeviceOrientationEvent.requestPermission === 'function') {   // iOS 13+
-      const r = await DeviceOrientationEvent.requestPermission();
-      if (r !== 'granted') return false;
-    }
-    window.addEventListener('deviceorientation', onOrientation);
-    const t0 = performance.now();
-    while (!input.got && performance.now() - t0 < 1200) await new Promise(r => setTimeout(r, 100));
-    return input.got;
-  } catch { return false; }
+  if (typeof DeviceOrientationEvent === 'undefined') return 'unsupported';
+  if (!window.isSecureContext) return 'insecure';
+  let permP = null;
+  if (typeof DeviceOrientationEvent.requestPermission === 'function') {   // iOS 13+
+    try { permP = DeviceOrientationEvent.requestPermission(); } catch { return 'error'; }
+  }
+  window.addEventListener('deviceorientation', onOrientation);
+  if (permP) {
+    try { if (await permP !== 'granted') return 'denied'; } catch { return 'error'; }
+  }
+  const t0 = performance.now();
+  while (!input.got && performance.now() - t0 < 2500) await new Promise(r => setTimeout(r, 100));
+  return input.got ? 'ok' : 'nodata';
+}
+const TILT_MSG = {
+  unsupported: 'This browser has no motion sensor access. Drag to aim.',
+  insecure: 'Tilt needs the https:// link. Drag to aim for now.',
+  denied: 'Motion access was not allowed. Close this tab, open the link again, tap Start and choose Allow.',
+  error: 'Motion access failed. Reload and tap Start again.',
+  nodata: 'No motion data from this device. Drag to aim: sideways turns, pulling down draws harder.',
+};
+function setTiltMode(on) {
+  input.mode = on ? 'tilt' : 'touch';
+  $('recenter').hidden = !on;
+  $('tiltStatus').textContent = on ? 'Tilt on' : 'Drag mode';
 }
 function recenter() { input.b0 = input.beta; input.g0 = input.gamma; }
 function readTilt() {
@@ -329,8 +358,12 @@ function hud() {
   const t = state.target;
   $('distVal').textContent = t ? `${Math.round((world.ay - t.y) * CONFIG.METERS_PER_UNIT)} m` : '— m';
   $('scoreVal').textContent = state.score;
-  $('windVal').textContent = (state.wind > 0 ? '+' : '') + state.wind;
-  $('windArrow').style.transform = `scaleX(${state.wind < 0 ? -1 : 1})`;
+  const w = state.wind, pct = Math.min(Math.abs(w), 100) / 100 * 50;   // full half-track = wind 100
+  $('windVal').textContent = (w > 0 ? '+' : '') + w;
+  $('windVal').className = 'val ' + (w > 0 ? 'pos' : w < 0 ? 'neg' : '');
+  $('gPos').style.width = (w > 0 ? pct : 0) + '%';
+  $('gNeg').style.width = (w < 0 ? pct : 0) + '%';
+  $('gauge').setAttribute('aria-label', `Wind ${w}`);
   const q = $('quiver'); q.innerHTML = '';
   for (let i = 0; i < Math.max(CONFIG.ARROWS_PER_ROUND, state.arrows); i++) {
     const el = document.createElement('i'); if (i >= state.arrows) el.className = 'spent'; q.appendChild(el);
@@ -543,7 +576,7 @@ function frame(now) {
   }
   const s = world.scale * world.dpr;
   ctx.setTransform(s, 0, 0, s, 0, 0);
-  drawField(); drawWind(dt); drawTarget(); drawFlag(); drawStuck(); drawPreview(); drawArcher(); drawFlight(dt); drawWindGauge(); drawPopups(dt); drawBanner(dt);
+  drawField(); drawWind(dt); drawTarget(); drawFlag(); drawStuck(); drawPreview(); drawArcher(); drawFlight(dt); drawPopups(dt); drawBanner(dt);
   hudLive();
   requestAnimationFrame(frame);
 }
@@ -570,10 +603,15 @@ function titleScreen() {
   const setT = v => { CONFIG.AIM_SECONDS = v; store.set('aim', v); $('t10').setAttribute('aria-pressed', v === 10); $('t5').setAttribute('aria-pressed', v === 5); };
   $('t10').onclick = () => setT(10); $('t5').onclick = () => setT(5);
   $('startBtn').onclick = async () => {
+    const tiltP = enableTilt();      // first thing in the tap, so iOS shows its Allow prompt
     audioInit();
-    const ok = await enableTilt();   // must run inside the tap for iOS permission
-    if (ok) { input.mode = 'tilt'; recenter(); $('recenter').hidden = false; }
-    else { input.mode = 'touch'; toast('Tilt isn\'t available here. Drag to aim: sideways turns, pulling down draws harder.', 4500); }
+    const res = await tiltP;
+    if (res === 'ok') { setTiltMode(true); recenter(); }
+    else {
+      setTiltMode(false); toast(TILT_MSG[res], 6000);
+      // if motion data shows up late, switch to tilt on its own
+      if (res === 'nodata') { const iv = setInterval(() => { if (input.got) { clearInterval(iv); setTiltMode(true); recenter(); toast('Tilt on'); } }, 300); }
+    }
     try { await navigator.wakeLock?.request('screen'); } catch {}
     hideOverlay(); startGame();
   };
