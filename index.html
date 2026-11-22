@@ -72,11 +72,6 @@ h2{font-family:var(--display);font-weight:400;font-size:32px;line-height:1;margi
     <div class="stack" style="align-items:center"><span class="lbl">Arrows</span><div id="quiver"></div></div>
     <div class="stack right"><span class="lbl">Cleared</span><span class="val" id="scoreVal">0</span></div>
   </div>
-  <div class="windrow" aria-label="Wind">
-    <span class="lbl">Wind</span>
-    <div class="gauge" role="img" id="gauge" aria-label="Wind 0"><div class="track"></div><div class="neg" id="gNeg"></div><div class="pos" id="gPos"></div><div class="mid"></div></div>
-    <span class="val" id="windVal">0</span>
-  </div>
   <div id="stage">
     <canvas id="cv"></canvas>
     <div id="toast" hidden></div>
@@ -105,7 +100,7 @@ const CONFIG = {
   TARGET_R_START: 8,        // target radius in round 1
   TARGET_R_SHRINK: 0.5,     // radius lost per round
   TARGET_R_MIN: 3.5,        // smallest the target gets
-  TARGET_DISTANCE: 0.8,     // target sits at this share of the field's length, the same every round
+  TARGET_DISTANCE: 1.0,     // target sits at this share of the field's length (1.0 = far end), the same every round
   MOVE_FROM_ROUND: 9999,    // moving target is OFF (set e.g. 3 to slide it from round 3)
   MOVE_AMP_START: 6,        // how far it slides each way when it starts moving
   MOVE_AMP_STEP: 2,         // extra slide per round after that
@@ -224,7 +219,7 @@ function setTiltMode(on) {
 function recenter() { input.b0 = input.beta; input.g0 = input.gamma; }
 function readTilt() {
   if (input.mode !== 'tilt') return;
-  input.deg = clamp((input.g0 - input.gamma) * 1.1, -35, 35);   // swapped per Dustin: tilt left aims right
+  input.deg = clamp((input.gamma - input.g0) * 1.1, -35, 35);   // tilt right aims right
 }
 let drag = null;
 const stage = $('stage');
@@ -387,12 +382,7 @@ function hud() {
   $('distVal').textContent = t ? `${Math.round((world.ay - t.y) * CONFIG.METERS_PER_UNIT)} m` : '— m';
   $('scoreVal').textContent = state.score;
   $('bestVal').textContent = Math.max(state.best, state.score);
-  const w = state.wind, pct = Math.min(Math.abs(w), 100) / 100 * 50;   // full half-track = wind 100
-  $('windVal').textContent = `${Math.abs(w)} mph`;   // direction is shown by color: red = right, yellow = left
-  $('windVal').className = 'val ' + (w > 0 ? 'pos' : w < 0 ? 'neg' : '');
-  $('gPos').style.width = (w > 0 ? pct : 0) + '%';
-  $('gNeg').style.width = (w < 0 ? pct : 0) + '%';
-  $('gauge').setAttribute('aria-label', `Wind ${w}`);
+  $('stage').setAttribute('aria-label', `Wind ${Math.abs(state.wind)} mph to the ${state.wind < 0 ? 'left' : 'right'}`);
   const q = $('quiver'); q.innerHTML = '';
   for (let i = 0; i < Math.max(CONFIG.ARROWS_PER_ROUND, state.arrows); i++) {
     const el = document.createElement('i'); if (i >= state.arrows) el.className = 'spent'; q.appendChild(el);
@@ -482,8 +472,8 @@ function drawTarget() {
   const t = state.target; if (!t) return;
   // stand shadow + legs
   ctx.fillStyle = 'rgba(0,0,0,.25)'; ctx.beginPath(); ctx.ellipse(t.x + 1.5, t.y + 2, t.r * 1.05, t.r * 1.05, 0, 0, 7); ctx.fill();
-  ctx.fillStyle = '#f6f1e4'; ctx.beginPath(); ctx.arc(t.x, t.y, t.r, 0, 7); ctx.fill();   // one plain color, no scoring rings
-  ctx.strokeStyle = 'rgba(0,0,0,.45)'; ctx.lineWidth = .35; ctx.stroke();
+  ctx.fillStyle = '#ff2fb4'; ctx.beginPath(); ctx.arc(t.x, t.y, t.r, 0, 7); ctx.fill();   // one plain hot-pink color: stands out on the green
+  ctx.strokeStyle = '#ffffff'; ctx.lineWidth = .5; ctx.stroke();
 }
 function drawArrow(x, y, ang, scale, fletch) {
   ctx.save(); ctx.translate(x, y); ctx.rotate(ang); ctx.scale(scale, scale);
@@ -519,6 +509,19 @@ function drawPreview() {
   const lx = world.ax + sx * range, ly = world.ay - cy * range;
   ctx.strokeStyle = 'rgba(241,234,214,.85)'; ctx.lineWidth = .3;
   ctx.beginPath(); ctx.moveTo(lx - 1.4, ly - 1.4); ctx.lineTo(lx + 1.4, ly + 1.4); ctx.moveTo(lx + 1.4, ly - 1.4); ctx.lineTo(lx - 1.4, ly + 1.4); ctx.stroke();
+}
+function drawWindMeter() {                     // small meter right beside the archer
+  const w = state.wind, mag = Math.min(Math.abs(w), 100);
+  const col = w < 0 ? '#f4c331' : '#e8231c';      // red = right, yellow = left (same as the flag)
+  const x0 = world.ax + 9, len = 24, cx = x0 + len / 2, y = world.ay - 2.2;
+  ctx.fillStyle = 'rgba(18,33,26,.72)';
+  ctx.beginPath(); ctx.roundRect ? ctx.roundRect(x0 - 2, y - 2.6, len + 4, 9.6, 1.6) : ctx.rect(x0 - 2, y - 2.6, len + 4, 9.6); ctx.fill();
+  ctx.fillStyle = '#d6d6d0'; ctx.fillRect(x0, y - 1, len, 2);
+  const fill = mag / 100 * len / 2;
+  ctx.fillStyle = col; ctx.fillRect(w < 0 ? cx - fill : cx, y - 1, fill, 2);
+  ctx.fillStyle = '#0b0b0b'; ctx.fillRect(cx - .5, y - 2, 1, 4);
+  ctx.textAlign = 'center'; ctx.fillStyle = col; ctx.font = '700 3.6px "Barlow Condensed", sans-serif';
+  ctx.fillText(`${Math.abs(w)} mph`, cx, y + 5.6);
 }
 function drawArcher() {
   const x = world.ax, y = world.ay;
@@ -601,7 +604,7 @@ function frame(now) {
   }
   const s = world.scale * world.dpr;
   ctx.setTransform(s, 0, 0, s, 0, 0);
-  drawField(); drawWind(dt); drawTarget(); drawFlag(); drawStuck(); drawPreview(); drawArcher(); drawFlight(dt); drawPopups(dt); drawBanner(dt);
+  drawField(); drawWind(dt); drawTarget(); drawFlag(); drawStuck(); drawPreview(); drawArcher(); drawWindMeter(); drawFlight(dt); drawPopups(dt); drawBanner(dt);
   hudLive();
   requestAnimationFrame(frame);
 }
